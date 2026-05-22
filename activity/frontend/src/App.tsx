@@ -111,7 +111,7 @@ export default function App() {
       } catch (err) {
         setSetup({
           loading: false,
-          error: err instanceof Error ? err.message : 'Unknown error',
+          error: err instanceof Error ? err.message : (typeof err === 'string' ? err : JSON.stringify(err)) || 'Unknown error',
           user: null,
           sessionId: '',
         })
