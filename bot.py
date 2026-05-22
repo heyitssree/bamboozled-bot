@@ -44,7 +44,7 @@ class BamboozledBot(commands.Bot):
             existing_raw = await self.http.get_global_commands(self.application_id)
             entry_points = [c for c in existing_raw if c.get("type") == 4]
             commands = self.tree.get_commands(guild=None)
-            payload = [c.to_dict() for c in commands] + entry_points
+            payload = [c.to_dict(self.tree) for c in commands] + entry_points
             result = await self.http.bulk_upsert_global_commands(self.application_id, payload=payload)
             logger.info(
                 "Synced %d slash command(s) (Activity Entry Point preserved).",
