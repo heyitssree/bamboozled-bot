@@ -5,7 +5,7 @@ Survival Mode — single-player, streak-based trivia until one wrong answer.
 Rules:
 - Single player only — starts immediately, no lobby
 - Questions served one at a time with a 15-second timer each
-- One wrong answer or timeout = game over
+- One wrong answer or timeout = game over; Give Up at any time
 - No question cap — runs until death
 - Score = streak (number of correct answers before dying)
 - Boli formula: min(streak * multiplier, 200)
@@ -45,7 +45,6 @@ logger = logging.getLogger("navi.survival")
 # ---------------------------------------------------------------------------
 
 _SURVIVAL_TIMEOUT = 15          # seconds per question
-_SURVIVAL_ARCHIVE_DELAY = 60    # seconds before archiving thread after game ends
 _TIMER_UPDATE_INTERVAL = 5      # edit embed every N seconds to show countdown
 
 _DIFFICULTY_MULTIPLIER: dict[str, int] = {
@@ -58,25 +57,32 @@ _MAX_BOLI = 200
 _ANSWER_LABELS = ["A", "B", "C", "D"]
 
 # ---------------------------------------------------------------------------
-# Category map (same as FFF)
+# Category choices (Fix 1) — ordered list matching game_config_view.py
 # ---------------------------------------------------------------------------
 
-_CATEGORY_MAP: dict[str, int] = {
-    "general": 9,
-    "science & nature": 17,
-    "computers": 18,
-    "mathematics": 19,
-    "mythology": 20,
-    "geography": 22,
-    "history": 23,
-    "art": 25,
-    "animals": 27,
-    "vehicles": 28,
-    "comics": 29,
-    "gadgets": 30,
-    "anime & manga": 31,
-    "cartoon & animations": 32,
+_CATEGORY_CHOICES = [
+    app_commands.Choice(name="General Knowledge",       value="9"),
+    app_commands.Choice(name="Science & Nature",        value="17"),
+    app_commands.Choice(name="Computers",               value="18"),
+    app_commands.Choice(name="Mathematics",             value="19"),
+    app_commands.Choice(name="History",                 value="23"),
+    app_commands.Choice(name="Geography",               value="22"),
+    app_commands.Choice(name="Art",                     value="25"),
+    app_commands.Choice(name="Animals",                 value="27"),
+    app_commands.Choice(name="Sports",                  value="21"),
+    app_commands.Choice(name="Mythology",               value="20"),
+    app_commands.Choice(name="Vehicles",                value="28"),
+    app_commands.Choice(name="Comics",                  value="29"),
+    app_commands.Choice(name="Gadgets",                 value="30"),
+    app_commands.Choice(name="Anime & Manga",           value="31"),
+    app_commands.Choice(name="Cartoons & Animations",   value="32"),
+]
+
+# id → display name (for embed labels)
+_CAT_ID_TO_NAME: dict[int, str] = {
+    int(c.value): c.name for c in _CATEGORY_CHOICES
 }
+
 
 # ---------------------------------------------------------------------------
 # Session dataclass
@@ -91,17 +97,21 @@ class SurvivalSession:
     channel_id: int
     guild_id: int
     difficulty: str
-    category: str | None
+    category_id: int | None   # numeric ID for fetch_question
+    category_name: str | None  # display name
     streak: int = 0
     started_at: datetime = field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
-# UI: Answer View (per question)
+# UI: Answer View (per question) — includes Give Up button (Fix 3a)
 # ---------------------------------------------------------------------------
 
 
 class SurvivalAnswerView(discord.ui.View):
+    # Sentinel value set on selected_answer when player gives up
+    GIVE_UP_SENTINEL = -999
+
     def __init__(self, player_id: int, answers: list[str], session: SurvivalSession):
         super().__init__(timeout=float(_SURVIVAL_TIMEOUT))
         self.player_id = player_id
@@ -117,6 +127,15 @@ class SurvivalAnswerView(discord.ui.View):
             )
             btn.callback = self._make_cb(i)
             self.add_item(btn)
+
+        # Give Up button (Fix 3a)
+        give_up_btn = discord.ui.Button(
+            label="🏳️ Give Up",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"surv_giveup_{session.session_id}",
+        )
+        give_up_btn.callback = self._give_up_cb
+        self.add_item(give_up_btn)
 
     def _make_cb(self, idx: int):
         async def cb(interaction: discord.Interaction) -> None:
@@ -142,6 +161,27 @@ class SurvivalAnswerView(discord.ui.View):
             self.stop()
 
         return cb
+
+    async def _give_up_cb(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.player_id:
+            await interaction.response.send_message(
+                "⚠️ This is not your game!", ephemeral=True
+            )
+            return
+        if self.selected_answer is not None:
+            await interaction.response.send_message(
+                "✅ Already answered!", ephemeral=True
+            )
+            return
+        self.selected_answer = self.GIVE_UP_SENTINEL
+        for item in self.children:
+            item.disabled = True
+        try:
+            await interaction.response.edit_message(view=self)
+        except discord.HTTPException:
+            await interaction.response.defer()
+        self._answered.set()
+        self.stop()
 
     async def on_timeout(self) -> None:
         self._answered.set()
@@ -188,6 +228,8 @@ async def _build_death_embed(
     reason_text = {
         "wrong": "❌ Wrong answer",
         "timeout": "⏱️ Time ran out",
+        "quit": "🏳️ Gave up",
+        "error": "⚠️ Fetch error",
     }.get(reason, reason)
 
     title = "💀 GAME OVER"
@@ -201,8 +243,8 @@ async def _build_death_embed(
     embed.add_field(name="Cause of Death", value=reason_text, inline=True)
     embed.add_field(name="🔥 Final Streak", value=str(session.streak), inline=True)
     embed.add_field(name="📊 Difficulty", value=session.difficulty.title(), inline=True)
-    if session.category:
-        embed.add_field(name="📚 Category", value=session.category.title(), inline=True)
+    if session.category_name:
+        embed.add_field(name="📚 Category", value=session.category_name, inline=True)
     embed.add_field(name="🍮 Boli Earned", value=f"+{boli}", inline=True)
     if not is_new_pb and personal_best > 0:
         embed.add_field(name="🏆 Your Best", value=str(personal_best), inline=True)
@@ -240,14 +282,15 @@ async def _save_result_to_navi_db(session: SurvivalSession, boli: int) -> int:
     """Save result and return personal best streak (prior to this game, for comparison)."""
     if not NAVI_DB_PATH or not Path(NAVI_DB_PATH).exists():
         return 0
+    cat_name = session.category_name
     try:
         async with aiosqlite.connect(NAVI_DB_PATH) as db:
             # Fetch previous best
-            if session.category:
+            if cat_name:
                 cursor = await db.execute(
                     "SELECT MAX(streak) FROM survival_scores "
                     "WHERE user_id = ? AND difficulty = ? AND category = ?",
-                    (session.player_id, session.difficulty, session.category),
+                    (session.player_id, session.difficulty, cat_name),
                 )
             else:
                 cursor = await db.execute(
@@ -267,7 +310,7 @@ async def _save_result_to_navi_db(session: SurvivalSession, boli: int) -> int:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (game_id, session.player_id, session.guild_id, session.username,
-                 session.streak, session.difficulty, session.category, boli),
+                 session.streak, session.difficulty, cat_name, boli),
             )
             await db.commit()
         return prev_best
@@ -299,18 +342,21 @@ class SurvivalCog(commands.Cog):
     )
     @app_commands.describe(
         difficulty="Question difficulty (default: medium)",
-        category="Trivia category (optional)",
+        category="Trivia category (optional — leave blank for all)",
     )
-    @app_commands.choices(difficulty=[
-        app_commands.Choice(name="Easy", value="easy"),
-        app_commands.Choice(name="Medium", value="medium"),
-        app_commands.Choice(name="Hard", value="hard"),
-    ])
+    @app_commands.choices(
+        difficulty=[
+            app_commands.Choice(name="Easy",   value="easy"),
+            app_commands.Choice(name="Medium", value="medium"),
+            app_commands.Choice(name="Hard",   value="hard"),
+        ],
+        category=_CATEGORY_CHOICES,   # Fix 1: dropdown choices
+    )
     async def survival(
         self,
         interaction: discord.Interaction,
         difficulty: str = "medium",
-        category: Optional[str] = None,
+        category: Optional[str] = None,  # value is the stringified category ID, or None
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
@@ -329,20 +375,12 @@ class SurvivalCog(commands.Cog):
 
         await interaction.response.defer(thinking=True)
 
-        # Resolve category
+        # Resolve category from choice value (Fix 1)
         cat_id: Optional[int] = None
         cat_name: Optional[str] = None
         if category:
-            cat_lower = category.lower().strip()
-            cat_id = _CATEGORY_MAP.get(cat_lower)
-            if cat_id is None:
-                for k, v in _CATEGORY_MAP.items():
-                    if cat_lower in k:
-                        cat_id = v
-                        cat_name = k.title()
-                        break
-            else:
-                cat_name = category.title()
+            cat_id = int(category)
+            cat_name = _CAT_ID_TO_NAME.get(cat_id, f"Category {cat_id}")
 
         # Create private thread
         timestamp = datetime.utcnow().strftime("%b %d %H:%M")
@@ -375,7 +413,8 @@ class SurvivalCog(commands.Cog):
             channel_id=thread.id,
             guild_id=interaction.guild.id,
             difficulty=difficulty,
-            category=cat_name,
+            category_id=cat_id,
+            category_name=cat_name,
         )
 
         if not register_session(thread.id, "survival", interaction.user.id):
@@ -409,7 +448,7 @@ class SurvivalCog(commands.Cog):
             f"Player: **{session.username}** · Difficulty: **{difficulty.title()}**"
             + (f" · Category: **{cat_name}**" if cat_name else "")
             + f"\n\n*Answer correctly to survive. One mistake and it's OVER.*\n"
-            f"⏱️ {_SURVIVAL_TIMEOUT}s per question."
+            f"⏱️ {_SURVIVAL_TIMEOUT}s per question. Click **🏳️ Give Up** to quit anytime."
         )
         await asyncio.sleep(2)
 
@@ -446,7 +485,7 @@ class SurvivalCog(commands.Cog):
             )
 
             try:
-                answered = await asyncio.wait_for(
+                await asyncio.wait_for(
                     answer_view._answered.wait(), timeout=float(_SURVIVAL_TIMEOUT)
                 )
             except asyncio.TimeoutError:
@@ -462,8 +501,14 @@ class SurvivalCog(commands.Cog):
                 death_reason = "timeout"
                 break
 
-            # Player answered
+            # Player answered or gave up
             timer_task.cancel()
+
+            # ── Give Up (Fix 3a) ──────────────────────────────
+            if answer_view.selected_answer == SurvivalAnswerView.GIVE_UP_SENTINEL:
+                await thread.send(f"🏳️ **{session.username}** gave up. Respect.")
+                death_reason = "quit"
+                break
 
             if answer_view.selected_answer == correct_idx:
                 session.streak += 1
@@ -497,13 +542,13 @@ class SurvivalCog(commands.Cog):
                 death_reason = "wrong"
                 break
 
-        # Compute Boli
+        # Compute Boli — 0 if player gave up voluntarily
         multiplier = _DIFFICULTY_MULTIPLIER.get(difficulty, 4)
-        boli = min(session.streak * multiplier, _MAX_BOLI)
+        boli = 0 if death_reason == "quit" else min(session.streak * multiplier, _MAX_BOLI)
 
         # Save result and get personal best
         prev_best = await _save_result_to_navi_db(session, boli)
-        is_new_pb = session.streak > prev_best and session.streak > 0
+        is_new_pb = session.streak > prev_best and session.streak > 0 and death_reason != "quit"
 
         # Build and send death embed
         death_embed = await _build_death_embed(session, death_reason, boli, prev_best, is_new_pb)
@@ -514,8 +559,8 @@ class SurvivalCog(commands.Cog):
             await _award_boli(session.player_id, session.username, boli, game_id)
             await thread.send(f"🍮 **+{boli} Boli** awarded to **{session.username}**!")
 
-        # Archive after a delay
-        await asyncio.sleep(_SURVIVAL_ARCHIVE_DELAY)
+        # Fix 2: Lock thread immediately (read-only) after game ends
+        await asyncio.sleep(3)
         try:
             await thread.edit(archived=True, locked=True)
         except discord.Forbidden:

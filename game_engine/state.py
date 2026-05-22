@@ -44,6 +44,8 @@ class GameState:
     correct_answer_count: Dict[int, int] = field(default_factory=dict)
     # Seconds the active player took to answer this turn (set after answer/timeout)
     answer_time_seconds: float = 0.0
+    # Per-player consecutive non-answer (timeout/forfeit) turns — for AFK kick
+    afk_turns: Dict[int, int] = field(default_factory=dict)
 
     # Game configuration (set by host at start)
     total_rounds: int = TOTAL_ROUNDS
@@ -166,6 +168,7 @@ class GameState:
         self.consecutive_correct = {}
         self.correct_answer_count = {}
         self.answer_time_seconds = 0.0
+        self.afk_turns = {}
         self.switcheroo_used = {}
         self.category_rotation = []
         self.category_rotation_index = 0

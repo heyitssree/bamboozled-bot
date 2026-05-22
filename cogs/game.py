@@ -336,7 +336,7 @@ class GoldenMonkeyView(discord.ui.View):
 
 class GameControlsView(discord.ui.View):
     """Small view pinned to the first message of the game thread.
-    Gives the host a visible button to force-end the game mid-run."""
+    Gives the host a visible End Game button, and all players a Quit button."""
 
     def __init__(self, game: "GameState", cog: "BamboozledCog"):
         super().__init__(timeout=None)
@@ -358,13 +358,71 @@ class GameControlsView(discord.ui.View):
             return
         game.active = False
         self.stop()
-        # Respond immediately — cleanup (which sleeps 2s for thread archive) runs in background
         await interaction.response.edit_message(view=None)
         await interaction.followup.send(
             "🛑 **GAME ENDED EARLY.** The producer pulls the plug. No results saved. "
             "The audience leaves in stunned silence."
         )
         asyncio.create_task(self.cog._cleanup_game(game))
+
+    @discord.ui.button(label="🙊 Quit Game", style=discord.ButtonStyle.secondary, row=0)
+    async def quit_btn(self, interaction: discord.Interaction, _btn: discord.ui.Button):
+        """Any player can quit mid-game. Removes them from the player list."""
+        game = self.game
+        uid = interaction.user.id
+
+        if not game.active:
+            await interaction.response.send_message(
+                "⚠️ No game is running.", ephemeral=True
+            )
+            return
+        if uid not in game.players:
+            await interaction.response.send_message(
+                "⚠️ You're not a player in this game.", ephemeral=True
+            )
+            return
+
+        pname = game.player_display_name(uid)
+        is_current_turn = (uid == game.current_player_id())
+
+        # Remove the player from all game state structures
+        game.players.remove(uid)
+        game.player_names.pop(uid, None)
+        game.scores.pop(uid, None)
+        game.consecutive_correct.pop(uid, None)
+        game.correct_answer_count.pop(uid, None)
+        game.afk_turns.pop(uid, None)
+        game.golden_pass.pop(uid, None)
+        game.silenced.pop(uid, None)
+        game.switcheroo_used.pop(uid, None)
+        if game.sombrero_holder == uid:
+            game.sombrero_holder = game.players[0] if game.players else None
+
+        # Transfer host if needed
+        host_note = ""
+        if uid == game.host_id and game.players:
+            game.host_id = game.players[0]
+            host_note = f" **{game.player_names[game.host_id]}** is now the host."
+
+        # If it's their turn, signal forfeit so the turn loop unblocks
+        if is_current_turn:
+            game.forfeit_requested = True
+
+        # Adjust turn index if needed
+        if game.current_turn_index >= len(game.players) and game.players:
+            game.current_turn_index = 0
+
+        await interaction.response.send_message(
+            f"🙊 **{pname}** has left the game.{host_note}",
+        )
+
+        # No players left — end the game
+        if not game.players:
+            game.active = False
+            await interaction.followup.send(
+                "🛑 **No players remaining.** The show is cancelled."
+            )
+            asyncio.create_task(self.cog._cleanup_game(game))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1160,6 +1218,33 @@ class BamboozledCog(commands.Cog):
                 if not self._still_active(cid, game):
                     return
 
+                # Fix 4: AFK kick — remove players with 2+ consecutive timeouts
+                afk_player_id = player_id  # capture before advance_turn() changes index
+                if game.afk_turns.get(afk_player_id, 0) >= 2 and afk_player_id in game.players:
+                    afk_name = game.player_names.get(afk_player_id, str(afk_player_id))
+                    game.players.remove(afk_player_id)
+                    game.player_names.pop(afk_player_id, None)
+                    game.scores.pop(afk_player_id, None)
+                    game.afk_turns.pop(afk_player_id, None)
+                    game.consecutive_correct.pop(afk_player_id, None)
+                    game.golden_pass.pop(afk_player_id, None)
+                    game.silenced.pop(afk_player_id, None)
+                    game.switcheroo_used.pop(afk_player_id, None)
+                    if game.sombrero_holder == afk_player_id:
+                        game.sombrero_holder = game.players[0] if game.players else None
+                    # Adjust turn index so we don't skip the next player
+                    if game.current_turn_index >= len(game.players) and game.players:
+                        game.current_turn_index = 0
+                    await channel.send(
+                        f"💤 **{afk_name}** has been removed for going AFK "
+                        f"(2 consecutive unanswered turns). Don't ghost us next time."
+                    )
+                    if not game.players:
+                        game.active = False
+                        await channel.send("🛑 **No players remaining.** Game over.")
+                        await self._cleanup_game(game)
+                        return
+
             mist_lifted = game.decrement_mist()
 
             prev_rule = game.active_bamboozle_rule
@@ -1287,6 +1372,12 @@ class BamboozledCog(commands.Cog):
             game.apply_points(player_id, timeout_penalty)
             game.consecutive_correct[player_id] = 0
 
+            # Fix 4: AFK tracking — increment on timeout/forfeit, NOT on voluntary forfeit
+            if view.timed_out and not game.forfeit_requested:
+                game.afk_turns[player_id] = game.afk_turns.get(player_id, 0) + 1
+            else:
+                game.afk_turns[player_id] = 0  # forfeit is intentional — reset AFK
+
             score = game.scores[player_id]
             terror_note = (
                 f" ⚠️ *Timeout Terror: -{BAMBOOZLE_TIMEOUT_TERROR_COST} pts!*"
@@ -1309,6 +1400,7 @@ class BamboozledCog(commands.Cog):
 
         # ── Correct ──────────────────────────────────────────
         if view.chosen_idx == correct_idx:
+            game.afk_turns[player_id] = 0  # Fix 4: real answer — reset AFK
             game.apply_points(player_id, CORRECT_ANSWER_POINTS)
             streak = game.consecutive_correct.get(player_id, 0) + 1
             game.consecutive_correct[player_id] = streak
@@ -1374,6 +1466,7 @@ class BamboozledCog(commands.Cog):
                 penalty -= game.sombrero_penalty
             game.apply_points(player_id, penalty)
             game.consecutive_correct[player_id] = 0
+            game.afk_turns[player_id] = 0  # Fix 4: wrong answer is still an answer
 
             score = game.scores[player_id]
             sombrero_note = (
@@ -1576,45 +1669,57 @@ class BamboozledCog(commands.Cog):
             )
 
         elif card == ChanceCard.BAMBOOZLE:
-            await channel.send(
-                f"🃏 **{pname}** drew the **Bamboozle** card! They're choosing a new law of the land..."
-            )
-            btn_view = BamboozleRuleTriggerButton(player_id)
-            await channel.send(
-                f"⚖️ <@{player_id}>, click below to choose your law! You have 35 seconds to click.",
-                view=btn_view,
-            )
-            await btn_view.wait()
-
-            if btn_view.done and btn_view.selected_rule_id is not None:
-                rule_def = next(
-                    (r for r in BAMBOOZLE_RULES if r.id == btn_view.selected_rule_id), None
+            # Fix 5: Skip rule assignment on the final round — it would expire immediately
+            if game.current_round >= game.total_rounds:
+                game.apply_points(player_id, LUCKY_LLAMA_BONUS)
+                score = game.scores[player_id]
+                await channel.send(
+                    f"🃏 **{pname}** drew the **Bamboozle** card — but it's the **final round**! "
+                    f"Any rule would expire before it takes effect. "
+                    f"The card transforms into a 🦙 **Lucky Llama** — **+{LUCKY_LLAMA_BONUS} pts** consolation prize! "
+                    f"*(Score: {score:,})*"
                 )
-                if rule_def:
-                    active_rule = make_active_rule(rule_def.id, len(game.players))
-                    game.active_bamboozle_rule = active_rule
-
-                    if rule_def.is_permanent:
-                        perm_note = " This rule is **permanent** for the rest of the game."
-                    else:
-                        perm_note = (
-                            f" This rule is in effect for **1 full round** "
-                            f"({len(game.players)} turns)."
-                        )
-                    await channel.send(
-                        f"⚖️ **THE NEW LAW: {rule_def.name}** — {rule_def.description}."
-                        f" This is now in effect.{perm_note}"
-                    )
-
-                    # Apply permanent rule effects immediately
-                    if rule_def.is_permanent:
-                        on_set_msg = apply_on_set(active_rule, game)
-                        if on_set_msg:
-                            await channel.send(on_set_msg)
             else:
                 await channel.send(
-                    f"⏰ **{pname}** failed to choose a rule in time. The cosmos remain lawless."
+                    f"🃏 **{pname}** drew the **Bamboozle** card! They're choosing a new law of the land..."
                 )
+                btn_view = BamboozleRuleTriggerButton(player_id)
+                await channel.send(
+                    f"⚖️ <@{player_id}>, click below to choose your law! You have 35 seconds to click.",
+                    view=btn_view,
+                )
+                await btn_view.wait()
+
+                if btn_view.done and btn_view.selected_rule_id is not None:
+                    rule_def = next(
+                        (r for r in BAMBOOZLE_RULES if r.id == btn_view.selected_rule_id), None
+                    )
+                    if rule_def:
+                        active_rule = make_active_rule(rule_def.id, len(game.players))
+                        game.active_bamboozle_rule = active_rule
+
+                        if rule_def.is_permanent:
+                            perm_note = " This rule is **permanent** for the rest of the game."
+                        else:
+                            perm_note = (
+                                f" This rule is in effect for **1 full round** "
+                                f"({len(game.players)} turns)."
+                            )
+                        await channel.send(
+                            f"⚖️ **THE NEW LAW: {rule_def.name}** — {rule_def.description}."
+                            f" This is now in effect.{perm_note}"
+                        )
+
+                        # Apply permanent rule effects immediately
+                        if rule_def.is_permanent:
+                            on_set_msg = apply_on_set(active_rule, game)
+                            if on_set_msg:
+                                await channel.send(on_set_msg)
+                else:
+                    await channel.send(
+                        f"⏰ **{pname}** failed to choose a rule in time. The cosmos remain lawless."
+                    )
+
 
     # ─────────────────────────────────────────────────────────
     # Wango Cards
