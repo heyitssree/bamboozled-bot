@@ -30,7 +30,6 @@ const OUTCOME_BG: Record<WheelOutcome, string> = {
 export function WheelOfMayhem() {
   const wheelResult = useGameStore((s) => s.wheelResult)
   const currentPlayerId = useGameStore((s) => s.currentPlayerId)
-  const myPlayerId = useGameStore((s) => s.myPlayerId)
   const players = useGameStore((s) => s.players)
   const sendMessage = useGameStore((s) => s.sendMessage)
 
@@ -40,7 +39,6 @@ export function WheelOfMayhem() {
   const rotationRef = useRef(0)
   const animFrameRef = useRef<number>(0)
 
-  const isCurrentPlayer = myPlayerId === currentPlayerId
   const currentPlayer = currentPlayerId ? players[currentPlayerId] : null
 
   useEffect(() => {
