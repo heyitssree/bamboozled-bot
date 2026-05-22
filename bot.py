@@ -33,8 +33,23 @@ class BamboozledBot(commands.Bot):
         await self.load_extension("quiz_stats")
         # Sync slash commands globally.
         # For faster dev iteration, replace with: await self.tree.sync(guild=discord.Object(id=YOUR_GUILD_ID))
-        synced = await self.tree.sync()
-        logger.info("Synced %d slash command(s).", len(synced))
+        try:
+            synced = await self.tree.sync()
+            logger.info("Synced %d slash command(s).", len(synced))
+        except discord.HTTPException as e:
+            if e.code != 50240:
+                raise
+            # Discord has an Activity Entry Point command that must be included
+            # in any bulk sync (error 50240). Fetch it and re-send manually.
+            existing_raw = await self.http.get_global_commands(self.application_id)
+            entry_points = [c for c in existing_raw if c.get("type") == 4]
+            commands = self.tree.get_commands(guild=None)
+            payload = [c.to_dict() for c in commands] + entry_points
+            result = await self.http.bulk_upsert_global_commands(self.application_id, payload=payload)
+            logger.info(
+                "Synced %d slash command(s) (Activity Entry Point preserved).",
+                len(result) - len(entry_points),
+            )
 
     async def on_ready(self):
         logger.info("Logged in as %s (ID: %s)", self.user, self.user.id)
