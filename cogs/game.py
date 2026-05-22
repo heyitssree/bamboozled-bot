@@ -404,7 +404,7 @@ class LobbyView(discord.ui.View):
                 roster = "\n".join(f"• {game.player_names[pid]}" for pid in game.players)
                 host_name = game.player_names.get(game.host_id, "Unknown")
                 embed.description = (
-                    f"**Players ({len(game.players)}/6):**\n{roster}\n\n"
+                    f"**Players ({len(game.players)}/10):**\n{roster}\n\n"
                     f"👑 Host: **{host_name}**\n\n"
                     f"Press **Join** to join or **Leave** to exit. "
                     f"The host can **Start** or **End** the lobby.\n"
@@ -438,9 +438,9 @@ class LobbyView(discord.ui.View):
                 "⚠️ You're already in this lobby!", ephemeral=True
             )
             return
-        if len(game.players) >= 6:
+        if len(game.players) >= 10:
             await interaction.response.send_message(
-                "⚠️ This lobby is full (6 players max)!", ephemeral=True
+                "⚠️ This lobby is full (10 players max)!", ephemeral=True
             )
             return
 
@@ -453,7 +453,7 @@ class LobbyView(discord.ui.View):
         await interaction.response.edit_message(embed=self.lobby_embed(), view=self)
         await interaction.followup.send(
             f"🎬 **{interaction.user.display_name}** joined the lobby! "
-            f"({len(game.players)}/6 players)"
+            f"({len(game.players)}/10 players)"
         )
 
     @discord.ui.button(label="👋 Leave", style=discord.ButtonStyle.secondary, row=0)
@@ -929,7 +929,7 @@ class BamboozledCog(commands.Cog):
             title="🎬 Bamboozled — Chaos Trivia Game",
             description=(
                 "A multiplayer trivia game where answering correctly just gets the chaos started. "
-                "Supports 1–6 players per game, fully bot-run with slash commands.\n\n"
+                "Supports 1–10 players per game, fully bot-run with slash commands.\n\n"
                 "**How a turn works:**\n"
                 "Answer a trivia question → Correct gets you a **Chance Card**, wrong gets you a "
                 "**Wicked Wango Card**. Cards can send you to the **Wheel of Mayhem**, which has 8 "

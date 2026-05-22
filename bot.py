@@ -28,6 +28,9 @@ class BamboozledBot(commands.Bot):
     async def setup_hook(self):
         await init_db()
         await self.load_extension("cogs.game")
+        await self.load_extension("fastest_fingers")
+        await self.load_extension("survival")
+        await self.load_extension("quiz_stats")
         # Sync slash commands globally.
         # For faster dev iteration, replace with: await self.tree.sync(guild=discord.Object(id=YOUR_GUILD_ID))
         synced = await self.tree.sync()
