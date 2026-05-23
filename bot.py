@@ -9,6 +9,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from db.database import get_orphaned_channels, init_db
+from db.navi_bridge import ensure_navi_tables
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +28,7 @@ class BamboozledBot(commands.Bot):
 
     async def setup_hook(self):
         await init_db()
+        await ensure_navi_tables()
         await self.load_extension("cogs.game")
         await self.load_extension("fastest_fingers")
         await self.load_extension("survival")

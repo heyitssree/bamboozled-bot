@@ -27,6 +27,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from db.navi_bridge import award_boli
 from game_engine.constants import NAVI_DB_PATH
 from game_engine.trivia import fetch_question_any, shuffle_answers
 from session_registry import (
@@ -415,32 +416,8 @@ def _build_results_embed(session: FFFSession, total_q: int, early: bool = False)
 
 
 # ---------------------------------------------------------------------------
-# Boli / DB helpers
+# DB helpers
 # ---------------------------------------------------------------------------
-
-
-async def _award_boli(user_id: int, username: str, amount: int, game_id: str) -> bool:
-    """Award Boli to a user via the Navi DB (external_boli_points table)."""
-    if not NAVI_DB_PATH:
-        logger.warning("FFF Boli bridge: NAVI_DB_PATH not configured — skipping.")
-        return False
-    if not Path(NAVI_DB_PATH).exists():
-        logger.warning("FFF Boli bridge: DB not found at %s.", NAVI_DB_PATH)
-        return False
-    try:
-        async with aiosqlite.connect(NAVI_DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO external_boli_points "
-                "    (user_id, username, points, source_game, game_id) "
-                "VALUES (?, ?, ?, 'fff', ?)",
-                (user_id, username, amount, game_id),
-            )
-            await db.commit()
-        logger.info("FFF Boli: +%d to user %d (%s)", amount, user_id, username)
-        return True
-    except Exception as exc:
-        logger.warning("FFF Boli bridge failed: %s", exc)
-        return False
 
 
 async def _save_result_to_navi_db(session: FFFSession, total_q: int) -> None:
@@ -823,7 +800,7 @@ class FastestFingersCog(commands.Cog):
             name = session.players[uid]
             medal = _MEDALS[i] if i < 3 else f"#{placement}"
             boli_embed.add_field(name=f"{medal} {name}", value=f"+{boli} Boli", inline=False)
-            boli_tasks.append(_award_boli(uid, name, boli, f"fff_{session.session_id}_{uid}"))
+            boli_tasks.append(award_boli(uid, name, boli, reason=f"FFF placement #{placement}", game_id=f"fff_{session.session_id}_{uid}", source_game="fff"))
 
         if boli_tasks:
             await asyncio.gather(*boli_tasks, return_exceptions=True)

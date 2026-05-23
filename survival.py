@@ -28,6 +28,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from db.navi_bridge import award_boli
 from game_engine.constants import NAVI_DB_PATH
 from game_engine.trivia import shuffle_answers
 from game_engine.trivia_api import SLUG_TO_DISPLAY, fetch_question_tapi
@@ -247,29 +248,6 @@ async def _build_death_embed(
     embed.set_footer(text=f"Game ID: {session.session_id[:8]}")
     return embed
 
-
-async def _award_boli(user_id: int, username: str, amount: int, game_id: str) -> bool:
-    """Award Boli to a user via the Navi DB external_boli_points table."""
-    if not NAVI_DB_PATH:
-        logger.warning("Survival Boli bridge: NAVI_DB_PATH not configured — skipping.")
-        return False
-    if not Path(NAVI_DB_PATH).exists():
-        logger.warning("Survival Boli bridge: DB not found at %s.", NAVI_DB_PATH)
-        return False
-    try:
-        async with aiosqlite.connect(NAVI_DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO external_boli_points "
-                "    (user_id, username, points, source_game, game_id) "
-                "VALUES (?, ?, ?, 'survival', ?)",
-                (user_id, username, amount, game_id),
-            )
-            await db.commit()
-        logger.info("Survival Boli: +%d to user %d (%s)", amount, user_id, username)
-        return True
-    except Exception as exc:
-        logger.warning("Survival Boli bridge failed: %s", exc)
-        return False
 
 
 async def _save_result_to_navi_db(session: SurvivalSession, boli: int) -> int:
@@ -549,7 +527,14 @@ class SurvivalCog(commands.Cog):
 
         if boli > 0:
             game_id = f"surv_{session.session_id}"
-            await _award_boli(session.player_id, session.username, boli, game_id)
+            await award_boli(
+                session.player_id,
+                session.username,
+                boli,
+                reason=f"Survival: {session.difficulty}, streak {session.streak}",
+                game_id=game_id,
+                source_game="survival",
+            )
             await thread.send(f"🍮 **+{boli} Boli** awarded to **{session.username}**!")
 
         # Fix 2: Lock thread immediately (read-only) after game ends

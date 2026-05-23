@@ -2300,7 +2300,13 @@ class BamboozledCog(commands.Cog):
                     boli_results.append((pid, amount, reason))
 
                 boli_tasks = [
-                    award_boli(pid, amount, reason)
+                    award_boli(
+                        pid,
+                        game.player_names.get(pid, str(pid)),
+                        amount,
+                        reason,
+                        game_id=f"bamboozled_{game.channel_id}_{pid}_{int(time.time())}",
+                    )
                     for pid, amount, reason in boli_results
                     if amount > 0
                 ]
