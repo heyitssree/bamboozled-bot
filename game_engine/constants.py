@@ -32,6 +32,11 @@ SAFE_OPENTDB_CATEGORY_IDS = [
     32,  # Entertainment: Cartoon & Animations
 ]
 
+# ── Trivia API virtual category IDs (for "All Categories" rotation) ───────────
+# These negative integers map to TAPI-only categories (no OpenTDB equivalent).
+# Must stay in sync with TAPI_VIRTUAL_IDS in game_engine/trivia_api.py.
+TAPI_VIRTUAL_CATEGORY_IDS: list[int] = [-1, -2, -3, -4]
+
 # ── Bamboozle Rule content filter ─────────────────────────────────────────────
 # Set to True to run the Bamboozle Rule text through the profanity filter before
 # posting it to the channel. Set to False to disable filtering entirely.

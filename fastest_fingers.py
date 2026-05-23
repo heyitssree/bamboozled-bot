@@ -27,8 +27,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from game_engine.constants import NAVI_DB_PATH, SAFE_OPENTDB_CATEGORY_IDS
-from game_engine.trivia import fetch_question, shuffle_answers
+from game_engine.constants import NAVI_DB_PATH
+from game_engine.trivia import fetch_question_any, shuffle_answers
 from session_registry import (
     add_player,
     end_session,
@@ -79,6 +79,11 @@ _CATEGORY_CHOICES = [
     app_commands.Choice(name="Gadgets",                 value="30"),
     app_commands.Choice(name="Anime & Manga",           value="31"),
     app_commands.Choice(name="Cartoons & Animations",   value="32"),
+    # New: Trivia API categories
+    app_commands.Choice(name="🎵 Music",                value="-1"),
+    app_commands.Choice(name="🎬 Film & TV",            value="-2"),
+    app_commands.Choice(name="🍕 Food & Drink",         value="-3"),
+    app_commands.Choice(name="🌍 Society & Culture",    value="-4"),
 ]
 
 _CAT_ID_TO_NAME: dict[int, str] = {int(c.value): c.name for c in _CATEGORY_CHOICES}
@@ -577,15 +582,18 @@ class FastestFingersCog(commands.Cog):
         # Fetch questions upfront (before lobby closes to avoid mid-game latency)
         fetched_questions: list[dict] = []
         session_token: Optional[str] = None
+        seen_questions: set[str] = set()
         try:
             async with asyncio.timeout(30):
                 for _ in range(questions):
-                    q, session_token = await fetch_question(
+                    q, session_token = await fetch_question_any(
                         session_token=session_token,
                         difficulty=difficulty,
                         category=cat_id,
+                        seen=seen_questions,
                     )
                     if q:
+                        seen_questions.add(q["question"])
                         fetched_questions.append(q)
         except (asyncio.TimeoutError, Exception) as exc:
             logger.warning("FFF: question fetch error: %s", exc)
@@ -593,7 +601,7 @@ class FastestFingersCog(commands.Cog):
         if len(fetched_questions) < 3:
             end_session(thread.id)
             await thread.send(
-                "⚠️ **Game cancelled** — couldn't fetch enough questions from Open Trivia DB. "
+                "⚠️ **Game cancelled** — couldn't fetch enough questions. "
                 "Try again in a moment."
             )
             try:

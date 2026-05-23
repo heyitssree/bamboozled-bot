@@ -3,26 +3,18 @@ import html
 import json
 import logging
 import random
-import re
 from pathlib import Path
 from typing import Optional
 
 import aiohttp
 
 from game_engine.constants import SAFE_OPENTDB_CATEGORY_IDS
-
-# Questions matching any of these patterns are skipped and replaced.
-# Focused on US-sports and US-culture references unlikely to be relevant outside North America.
-_US_SPECIFIC_RE = re.compile(
-    r'\b('
-    r'NFL|NBA|MLB|NHL|MLS|WNBA|NASCAR|PGA Tour'
-    r'|Super Bowl|World Series|Stanley Cup|March Madness|Rose Bowl|Cotton Bowl'
-    r'|quarterback|touchdowns?|gridiron|pigskin'
-    r'|American football(?!\s+club)'  # allow "X American Football Club" — international teams
-    r'|AFL(?!\s+(?:Cup|Grand Final))'  # exclude Australian rules football
-    r'|CFL\b'                          # Canadian Football League
-    r')',
-    re.IGNORECASE,
+from game_engine.trivia_api import (
+    ALL_TAPI_SLUGS,
+    OPENTDB_TO_TAPI,
+    TAPI_VIRTUAL_IDS,
+    US_SPECIFIC_RE as _US_SPECIFIC_RE,
+    fetch_question_tapi,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,9 +102,11 @@ async def fetch_question(
     difficulty: Optional[str] = None,
     category: Optional[int] = None,
     question_type: str = "multiple",
+    seen: Optional[set] = None,
 ) -> tuple[Optional[dict], Optional[str]]:
     """Fetch one question. Returns (question_dict, token). Falls back on failure.
-    question_type: 'multiple' (4-choice) or 'boolean' (True/False)."""
+    question_type: 'multiple' (4-choice) or 'boolean' (True/False).
+    seen: set of question texts already asked this session — skipped if matched."""
     params: dict = {
         "amount": 1,
         "type": question_type,
@@ -153,21 +147,26 @@ async def fetch_question(
 
     if data and data.get("response_code") == 0 and data.get("results"):
         q = _decode(data["results"][0])
-        if _US_SPECIFIC_RE.search(q["question"]) or _US_SPECIFIC_RE.search(q["correct_answer"]):
-            logger.debug("Filtered US-specific question: %s", q["question"][:60])
-            # One retry with a fresh category draw
+        is_us = _US_SPECIFIC_RE.search(q["question"]) or _US_SPECIFIC_RE.search(q["correct_answer"])
+        is_seen = seen is not None and q["question"] in seen
+        if is_us or is_seen:
+            if is_us:
+                logger.debug("Filtered US-specific question: %s", q["question"][:60])
+            if is_seen:
+                logger.debug("Filtered already-seen question: %s", q["question"][:60])
+            # One retry with a fresh category draw — keep token so it advances correctly
             params["category"] = random.choice(SAFE_OPENTDB_CATEGORY_IDS)
-            params.pop("token", None)  # don't repeat-exhaust token on retry
             try:
                 retry_data = await _try()
                 if retry_data and retry_data.get("response_code") == 0 and retry_data.get("results"):
                     retry_q = _decode(retry_data["results"][0])
-                    if not (_US_SPECIFIC_RE.search(retry_q["question"]) or
-                            _US_SPECIFIC_RE.search(retry_q["correct_answer"])):
+                    retry_us = _US_SPECIFIC_RE.search(retry_q["question"]) or _US_SPECIFIC_RE.search(retry_q["correct_answer"])
+                    retry_seen = seen is not None and retry_q["question"] in seen
+                    if not retry_us and not retry_seen:
                         return retry_q, session_token
             except Exception:
                 pass
-            # Retry also matched or failed — return original rather than stall
+            # Retry also filtered — return original rather than stall indefinitely
         return q, session_token
 
     # Fallback: custom_questions.json
@@ -178,13 +177,65 @@ async def fetch_question(
                 qs = json.load(fh)
             if qs:
                 logger.warning("Using custom question fallback.")
-                return _decode(random.choice(qs)), session_token
+                unseen = [_decode(q) for q in qs if (seen is None or q.get("question", "") not in seen)]
+                pool = unseen if unseen else [_decode(q) for q in qs]
+                return random.choice(pool), session_token
         except Exception as exc:
             logger.warning("Failed to load custom_questions.json: %s", exc)
 
     # Emergency hardcode
     logger.warning("Using emergency hardcoded question.")
-    return _decode(random.choice(_EMERGENCY_QUESTIONS)), session_token
+    unseen_emergency = [q for q in _EMERGENCY_QUESTIONS if seen is None or q["question"] not in seen]
+    pool = unseen_emergency if unseen_emergency else _EMERGENCY_QUESTIONS
+    return _decode(random.choice(pool)), session_token
+
+
+async def fetch_question_any(
+    session_token: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    category: Optional[int] = None,
+    question_type: str = "multiple",
+    seen: Optional[set] = None,
+) -> tuple[Optional[dict], Optional[str]]:
+    """Fetch a question from OpenTDB or The Trivia API.
+
+    Routing logic:
+    - category < 0  → TAPI-only virtual category (music, film_and_tv, etc.)
+    - category > 0 with TAPI mapping → 50 % chance either source; falls back to OpenTDB on TAPI failure
+    - category > 0, no TAPI mapping → OpenTDB only
+    - category is None → 50 % chance: random TAPI slug vs OpenTDB (all-categories)
+
+    Returns (question_dict, updated_session_token) matching fetch_question's contract.
+    """
+    tapi_type = "true_false" if question_type == "boolean" else "text_choice"
+
+    # ── TAPI-only virtual category ─────────────────────────────────────────────
+    if category is not None and category < 0:
+        slug = TAPI_VIRTUAL_IDS.get(category)
+        q = await fetch_question_tapi(difficulty, slug, tapi_type, seen)
+        if q:
+            return q, session_token
+        # TAPI failed — fall through to OpenTDB all-categories as emergency
+        return await fetch_question(session_token, difficulty, None, question_type, seen)
+
+    # ── Specific OpenTDB category (possibly dual-source) ──────────────────────
+    if category is not None:
+        tapi_slug = OPENTDB_TO_TAPI.get(category)
+        if tapi_slug and random.random() < 0.5:
+            q = await fetch_question_tapi(difficulty, tapi_slug, tapi_type, seen)
+            if q:
+                return q, session_token
+            # TAPI failed — fall through to OpenTDB
+        return await fetch_question(session_token, difficulty, category, question_type, seen)
+
+    # ── All categories: randomly pick source ───────────────────────────────────
+    if random.random() < 0.5:
+        slug = random.choice(ALL_TAPI_SLUGS)
+        q = await fetch_question_tapi(difficulty, slug, tapi_type, seen)
+        if q:
+            return q, session_token
+        # TAPI failed — fall through to OpenTDB
+    return await fetch_question(session_token, difficulty, None, question_type, seen)
 
 
 def shuffle_answers(question: dict) -> tuple[list[str], int]:

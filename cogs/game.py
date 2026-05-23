@@ -44,6 +44,7 @@ from game_engine.bamboozle_rules import (
     make_active_rule,
 )
 from game_engine.constants import (
+    TAPI_VIRTUAL_CATEGORY_IDS,
     BAMBOOZLE_RULE_INPUT_TIMEOUT_SECONDS,
     BAMBOOZLE_TIMEOUT_TERROR_COST,
     BONUS_ROUND_POINTS,
@@ -74,7 +75,7 @@ from game_engine.constants import (
     SAFE_OPENTDB_CATEGORY_IDS,
 )
 from game_engine.state import GameState
-from game_engine.trivia import fetch_question, fetch_session_token, shuffle_answers
+from game_engine.trivia import fetch_question_any, fetch_session_token, shuffle_answers
 from game_engine.wheel import (
     SPIN_SUSPENSE,
     WHEEL_FLAVOUR,
@@ -1198,7 +1199,8 @@ class BamboozledCog(commands.Cog):
         # Build a shuffled full-rotation only when no specific categories were chosen.
         # When specific categories are selected, pick_question_category() samples them directly.
         if not game.question_categories:
-            rotation = list(SAFE_OPENTDB_CATEGORY_IDS) * 4  # enough for a long game
+            # Mix OpenTDB categories (×4) with TAPI-only virtual IDs (×4) so all topics rotate evenly.
+            rotation = list(SAFE_OPENTDB_CATEGORY_IDS) * 4 + TAPI_VIRTUAL_CATEGORY_IDS * 4
             random.shuffle(rotation)
             game.category_rotation = rotation
             game.category_rotation_index = 0
@@ -1306,12 +1308,14 @@ class BamboozledCog(commands.Cog):
 
         await asyncio.sleep(1)
 
-        question, new_token = await fetch_question(
+        question, new_token = await fetch_question_any(
             game.session_token,
             difficulty=game.question_difficulty,
             category=game.pick_question_category(),
+            seen=game.asked_questions,
         )
         game.session_token = new_token
+        game.asked_questions.add(question["question"])
 
         answers, correct_idx = shuffle_answers(question)
         embed = discord.Embed(
@@ -1599,13 +1603,15 @@ class BamboozledCog(commands.Cog):
             )
             await asyncio.sleep(1)
 
-            question, new_token = await fetch_question(
+            question, new_token = await fetch_question_any(
                 game.session_token,
                 difficulty=game.question_difficulty,
                 category=game.pick_question_category(),
                 question_type=dd_type,
+                seen=game.asked_questions,
             )
             game.session_token = new_token
+            game.asked_questions.add(question["question"])
             answers, correct_idx = shuffle_answers(question)
 
             embed = discord.Embed(
@@ -2195,12 +2201,14 @@ class BamboozledCog(commands.Cog):
                 await channel.send(f"❓ **{wname}** faces a tiebreaker question!")
                 await asyncio.sleep(1)
 
-                question, new_token = await fetch_question(
+                question, new_token = await fetch_question_any(
                     game.session_token,
                     difficulty=game.question_difficulty,
                     category=game.pick_question_category(),
+                    seen=game.asked_questions,
                 )
                 game.session_token = new_token
+                game.asked_questions.add(question["question"])
                 answers, correct_idx = shuffle_answers(question)
 
                 embed = discord.Embed(

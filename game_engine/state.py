@@ -1,7 +1,7 @@
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from game_engine.constants import MAX_SINGLE_SWING_FIXED, MIST_TURN_DURATION, SAFE_OPENTDB_CATEGORY_IDS, SOMBRERO_EXTRA_PENALTY, STARTING_POINTS, TOTAL_ROUNDS
 
@@ -70,6 +70,9 @@ class GameState:
     # Shuffled category cycle for question variety when "All Categories" is selected
     category_rotation: List[int] = field(default_factory=list)
     category_rotation_index: int = 0
+
+    # Questions asked this game session (by question text) — prevents in-game repeats
+    asked_questions: Set[str] = field(default_factory=set)
 
     def current_player_id(self) -> int:
         return self.players[self.current_turn_index]
@@ -173,6 +176,7 @@ class GameState:
         self.category_rotation = []
         self.category_rotation_index = 0
         self.question_categories = []
+        self.asked_questions = set()
         self.thread_id = None
         self.lobby_id = None
         self.last_join_time = time.time()

@@ -28,8 +28,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from game_engine.constants import NAVI_DB_PATH, SAFE_OPENTDB_CATEGORY_IDS
-from game_engine.trivia import fetch_question, shuffle_answers
+from game_engine.constants import NAVI_DB_PATH
+from game_engine.trivia import shuffle_answers
+from game_engine.trivia_api import SLUG_TO_DISPLAY, fetch_question_tapi
 from session_registry import (
     add_player,
     end_session,
@@ -57,31 +58,24 @@ _MAX_BOLI = 200
 _ANSWER_LABELS = ["A", "B", "C", "D"]
 
 # ---------------------------------------------------------------------------
-# Category choices (Fix 1) — ordered list matching game_config_view.py
+# Category choices — Trivia API slugs as values
 # ---------------------------------------------------------------------------
 
 _CATEGORY_CHOICES = [
-    app_commands.Choice(name="General Knowledge",       value="9"),
-    app_commands.Choice(name="Science & Nature",        value="17"),
-    app_commands.Choice(name="Computers",               value="18"),
-    app_commands.Choice(name="Mathematics",             value="19"),
-    app_commands.Choice(name="History",                 value="23"),
-    app_commands.Choice(name="Geography",               value="22"),
-    app_commands.Choice(name="Art",                     value="25"),
-    app_commands.Choice(name="Animals",                 value="27"),
-    app_commands.Choice(name="Sports",                  value="21"),
-    app_commands.Choice(name="Mythology",               value="20"),
-    app_commands.Choice(name="Vehicles",                value="28"),
-    app_commands.Choice(name="Comics",                  value="29"),
-    app_commands.Choice(name="Gadgets",                 value="30"),
-    app_commands.Choice(name="Anime & Manga",           value="31"),
-    app_commands.Choice(name="Cartoons & Animations",   value="32"),
+    app_commands.Choice(name="General Knowledge",   value="general_knowledge"),
+    app_commands.Choice(name="Science",             value="science"),
+    app_commands.Choice(name="History",             value="history"),
+    app_commands.Choice(name="Geography",           value="geography"),
+    app_commands.Choice(name="Arts & Literature",   value="arts_and_literature"),
+    app_commands.Choice(name="Music",               value="music"),
+    app_commands.Choice(name="Film & TV",           value="film_and_tv"),
+    app_commands.Choice(name="Food & Drink",        value="food_and_drink"),
+    app_commands.Choice(name="Society & Culture",   value="society_and_culture"),
+    app_commands.Choice(name="Sport & Leisure",     value="sport_and_leisure"),
 ]
 
-# id → display name (for embed labels)
-_CAT_ID_TO_NAME: dict[int, str] = {
-    int(c.value): c.name for c in _CATEGORY_CHOICES
-}
+# slug → display name (for embed labels)
+_SLUG_TO_NAME: dict[str, str] = {c.value: c.name for c in _CATEGORY_CHOICES}
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +91,8 @@ class SurvivalSession:
     channel_id: int
     guild_id: int
     difficulty: str
-    category_id: int | None   # numeric ID for fetch_question
-    category_name: str | None  # display name
+    category_slug: str | None   # TAPI slug for fetch_question_tapi
+    category_name: str | None   # display name
     streak: int = 0
     started_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -375,12 +369,9 @@ class SurvivalCog(commands.Cog):
 
         await interaction.response.defer(thinking=True)
 
-        # Resolve category from choice value (Fix 1)
-        cat_id: Optional[int] = None
-        cat_name: Optional[str] = None
-        if category:
-            cat_id = int(category)
-            cat_name = _CAT_ID_TO_NAME.get(cat_id, f"Category {cat_id}")
+        # Resolve category from choice value
+        cat_slug: Optional[str] = category if category else None
+        cat_name: Optional[str] = _SLUG_TO_NAME.get(cat_slug) if cat_slug else None
 
         # Create private thread
         timestamp = datetime.utcnow().strftime("%b %d %H:%M")
@@ -413,7 +404,7 @@ class SurvivalCog(commands.Cog):
             channel_id=thread.id,
             guild_id=interaction.guild.id,
             difficulty=difficulty,
-            category_id=cat_id,
+            category_slug=cat_slug,
             category_name=cat_name,
         )
 
@@ -428,7 +419,7 @@ class SurvivalCog(commands.Cog):
 
         # Run game in finally block to ensure cleanup
         try:
-            await self._run_survival(thread, session, interaction.user, difficulty, cat_id, cat_name)
+            await self._run_survival(thread, session, interaction.user, difficulty, cat_slug, cat_name)
         finally:
             end_session(thread.id)
 
@@ -440,7 +431,7 @@ class SurvivalCog(commands.Cog):
         session: SurvivalSession,
         player: discord.Member,
         difficulty: str,
-        cat_id: Optional[int],
+        cat_slug: Optional[str],
         cat_name: Optional[str],
     ) -> None:
         await thread.send(
@@ -452,20 +443,22 @@ class SurvivalCog(commands.Cog):
         )
         await asyncio.sleep(2)
 
-        session_token: Optional[str] = None
+        seen_questions: set[str] = set()
         death_reason = "unknown"
 
         while True:
-            # Fetch next question
+            # Fetch next question from The Trivia API
             try:
-                question, session_token = await fetch_question(
-                    session_token=session_token,
+                question = await fetch_question_tapi(
                     difficulty=difficulty,
-                    category=cat_id,
+                    tapi_slug=cat_slug,
+                    seen=seen_questions,
                 )
             except Exception as exc:
-                logger.warning("Survival: fetch_question error: %s", exc)
+                logger.warning("Survival: fetch_question_tapi error: %s", exc)
                 question = None
+            if question is not None:
+                seen_questions.add(question["question"])
 
             if question is None:
                 await thread.send(

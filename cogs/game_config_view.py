@@ -3,6 +3,7 @@ from typing import List, Optional
 import discord
 
 _CAT_NAMES: dict[int, str] = {
+    # OpenTDB categories
     9:  "General Knowledge",
     17: "Science & Nature",
     18: "Science: Computers",
@@ -18,6 +19,11 @@ _CAT_NAMES: dict[int, str] = {
     30: "Science: Gadgets",
     31: "Anime & Manga",
     32: "Cartoons & Animations",
+    # TAPI-only virtual categories (negative IDs)
+    -1: "Music",
+    -2: "Film & TV",
+    -3: "Food & Drink",
+    -4: "Society & Culture",
 }
 
 _CAT_OPTIONS = [
@@ -36,6 +42,11 @@ _CAT_OPTIONS = [
     discord.SelectOption(label="Science: Gadgets",      value="30"),
     discord.SelectOption(label="Anime & Manga",         value="31"),
     discord.SelectOption(label="Cartoons & Animations", value="32"),
+    # New: Trivia API categories
+    discord.SelectOption(label="🎵 Music",              value="-1"),
+    discord.SelectOption(label="🎬 Film & TV",          value="-2"),
+    discord.SelectOption(label="🍕 Food & Drink",       value="-3"),
+    discord.SelectOption(label="🌍 Society & Culture",  value="-4"),
 ]
 
 
