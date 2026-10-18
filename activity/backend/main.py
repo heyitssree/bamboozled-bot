@@ -20,7 +20,7 @@ from question_service import fetch_question
 from session_manager import SessionManager
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("navi.activity.main")
+logger = logging.getLogger("bamboozled.activity.main")
 
 app = FastAPI(title="Bamboozled Activity API", version="1.0")
 

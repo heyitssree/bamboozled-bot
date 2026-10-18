@@ -24,7 +24,7 @@ from models import (
     WHEEL_WEIGHTS,
 )
 
-logger = logging.getLogger("navi.activity.engine")
+logger = logging.getLogger("bamboozled.activity.engine")
 
 
 class BamboozledEngine:

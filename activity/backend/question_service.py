@@ -9,7 +9,7 @@ import httpx
 
 from models import Question
 
-logger = logging.getLogger("navi.activity.questions")
+logger = logging.getLogger("bamboozled.activity.questions")
 
 _OPENTDB_URL = "https://opentdb.com/api.php"
 

@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from activity_launcher import register_activity_command
 from db.database import get_orphaned_channels, init_db
 from db.navi_bridge import ensure_navi_tables
 
@@ -33,6 +34,7 @@ class BamboozledBot(commands.Bot):
         await self.load_extension("fastest_fingers")
         await self.load_extension("survival")
         await self.load_extension("quiz_stats")
+        register_activity_command(self.tree)
         # Sync slash commands globally.
         # For faster dev iteration, replace with: await self.tree.sync(guild=discord.Object(id=YOUR_GUILD_ID))
         try:

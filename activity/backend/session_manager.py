@@ -9,7 +9,7 @@ from fastapi import WebSocket
 
 from models import GameConfig, GamePhase, GameState, Player
 
-logger = logging.getLogger("navi.activity.sessions")
+logger = logging.getLogger("bamboozled.activity.sessions")
 
 
 class SessionManager:

@@ -1,11 +1,10 @@
 """
 activity_launcher.py
 Registers the /bamboozled-activity slash command on the bot's CommandTree.
-Works with both discord.Client + CommandTree (Navi) and commands.Bot setups.
 
-Usage (discord.Client pattern — Navi bot.py):
-    from bamboozled.activity_launcher import register_activity_command
-    register_activity_command(tree)   # call before tree.sync()
+Usage (bot.py setup_hook):
+    from activity_launcher import register_activity_command
+    register_activity_command(self.tree)   # call before tree.sync()
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ import discord
 import httpx
 from discord import app_commands
 
-logger = logging.getLogger("navi.activity.launcher")
+logger = logging.getLogger("bamboozled.activity.launcher")
 
 
 def register_activity_command(tree: app_commands.CommandTree) -> None:

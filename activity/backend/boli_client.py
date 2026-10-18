@@ -6,7 +6,7 @@ import httpx
 
 from config import settings
 
-logger = logging.getLogger("navi.activity.boli_client")
+logger = logging.getLogger("bamboozled.activity.boli_client")
 
 
 async def award_boli(session_id: str, awards: dict[str, int]) -> bool:

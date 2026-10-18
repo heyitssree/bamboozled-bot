@@ -1,18 +1,19 @@
 [Unit]
-Description=Bamboozled — Chaos Trivia Discord Bot
+Description=Bamboozled - Chaos Trivia Discord Bot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=sreekuttanjayakumar97
-WorkingDirectory=/home/sreekuttanjayakumar97/disco_bot/bamboozled
-EnvironmentFile=/home/sreekuttanjayakumar97/disco_bot/bamboozled/.env
-ExecStart=/home/sreekuttanjayakumar97/disco_bot/.venv/bin/python bot.py
+# Replace YOUR_USER and the path with where you cloned bamboozled-bot
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/bamboozled-bot
+EnvironmentFile=/home/YOUR_USER/bamboozled-bot/.env
+ExecStart=/home/YOUR_USER/bamboozled-bot/.venv/bin/python bot.py
 Restart=on-failure
 RestartSec=10
-StandardOutput=append:/home/sreekuttanjayakumar97/disco_bot/bamboozled/logs/bot.log
-StandardError=append:/home/sreekuttanjayakumar97/disco_bot/bamboozled/logs/bot.log
+StandardOutput=append:/home/YOUR_USER/bamboozled-bot/logs/bot.log
+StandardError=append:/home/YOUR_USER/bamboozled-bot/logs/bot.log
 
 [Install]
 WantedBy=multi-user.target

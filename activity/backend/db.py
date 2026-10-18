@@ -8,7 +8,7 @@ import aiosqlite
 
 from config import settings
 
-logger = logging.getLogger("navi.activity.db")
+logger = logging.getLogger("bamboozled.activity.db")
 
 _CREATE_TABLES = """
 PRAGMA journal_mode=WAL;

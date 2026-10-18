@@ -1,313 +1,153 @@
-# Bamboozled — Deployment Guide
+# Bamboozled
 
-Bamboozled lives in the `bamboozled/` sub-directory of the same `disco_bot` repo as AstRobot. It runs as a **separate bot process** with its own Discord application and token, on the same GCP VM. The two bots are completely independent.
+A chaos-trivia Discord bot: players take turns answering questions, draw Bamboozle cards, spin the Wheel of Mayhem and try to survive the Mist. It ships as two parts in this repo:
 
----
+| Part | Folder | Needed? |
+|---|---|---|
+| Slash-command bot (`/bamboozled ...`, Survival, Fastest Fingers, stats) | repo root (`bot.py`) | Yes |
+| Discord Activity (`/bamboozled-activity`, a React app plus a FastAPI backend) | `activity/` | Optional |
 
-## What's new since initial build
+Boli Points sharing with the Navi bot is optional too. Bamboozled runs fine on its own.
 
-| Area | What changed |
-|---|---|
-| OpenTDB questions | Restricted to 12 SFW category IDs — entertainment categories excluded |
-| Bamboozle Rule input | Player-typed rules are screened by a content filter before posting |
-| `BAMBOOZLE_RULE_FILTER_ENABLED` | Toggle in `constants.py` — `True` by default |
-| `SAFE_OPENTDB_CATEGORY_IDS` | Configurable list of allowed category IDs in `constants.py` |
-| Game config UI | Host sees a rounds/difficulty/category picker before the game starts |
-| Player mentions | Turn opener and silence-skip now ping the active player |
-| Pacing delays | Small sleeps between game events for readability |
-| Boli Points bridge | Bamboozled awards Boli Points into Navi's database at game end |
+## Setup
 
----
+All configuration lives in one file, `.env`, created from `.env.example`. Every variable in it has a comment saying where to find the value.
 
-## Boli Points bridge
+### 1. Use your existing Discord application
 
-At the end of each game Bamboozled writes Boli Point awards directly into Navi's SQLite database. No Navi code is imported — only raw SQL via `aiosqlite`.
+This guide assumes the Bamboozled application already exists in the [Developer Portal](https://discord.com/developers/applications) and the bot is already in your server. Open that application and:
 
-### Setup
+1. **Bot** tab: click **Reset Token** and copy it into `DISCORD_TOKEN` (the old token stops working). No privileged intents are needed.
+2. If the bot was invited without the `applications.commands` scope, re-invite it from **OAuth2 > URL Generator** (scopes `bot` and `applications.commands`).
 
-Set `NAVI_DB_PATH` in `bamboozled/.env` to the absolute path of Navi's database on the VM:
+### Where to find each `.env` value
 
-```env
-NAVI_DB_PATH=/home/astrobot/disco_bot/data/astro_bot.db
+Copy `.env.example` to `.env`, then fill it in from the table. "Portal" means the [Developer Portal](https://discord.com/developers/applications) page for your Bamboozled application.
+
+| Variable | Needed for | How to get it |
+|---|---|---|
+| `DISCORD_TOKEN` | Bot (required) | Portal > **Bot** > **Reset Token**. It is shown once; copy it immediately. |
+| `DISCORD_APPLICATION_ID` | Activity | Portal > **General Information** > **Application ID** (a 17-19 digit number). |
+| `DISCORD_CLIENT_ID` | Activity backend | Same Application ID as above. |
+| `VITE_DISCORD_CLIENT_ID` | Activity frontend | Same Application ID again. These three must be identical. |
+| `DISCORD_CLIENT_SECRET` | Activity backend | Portal > **OAuth2** > **Client Secret** > **Reset Secret**. Shown once; keep it private. |
+| `ACTIVITY_BACKEND_URL` | Activity | Where the backend is reachable from the bot. Same machine: `http://localhost:8000`. Hosted: its public `https://` URL, with no trailing slash. |
+| `VITE_BACKEND_URL` | Activity frontend | The backend's websocket address as seen from inside Discord. Local: `ws://localhost:8000`. Hosted: `wss://` plus the backend host. Rebuild the frontend after changing it. |
+| `DB_PATH` | Activity backend | Your choice. The default `data/bamboozled_activity.db` is fine. |
+| `NAVI_DB_PATH` | Boli sharing, same machine | Absolute path to Navi's database file. In Navi it is the `DB_PATH` value, default `<navi-bot>/data/navi.db`. Leave empty to disable. |
+| `BOT_INTERNAL_API_URL` | Boli sharing, Activity games | Navi's API address: `http://<host-or-ip>:8080`, where 8080 is Navi's `API_SERVER_PORT`. Use `http://localhost:8080` if both run on one machine. |
+| `BOT_INTERNAL_SECRET` | Boli sharing, Activity games | You make it up. Run `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` and paste the same value into this `.env` and into Navi's `BOT_INTERNAL_SECRET`. |
+
+For the bot alone, only `DISCORD_TOKEN` is required. The Discord IDs and secrets above are one-time copies from the Portal, and Reset Token / Reset Secret invalidate the previous value.
+
+### 2. Run the bot
+
+Requires Python 3.11 or newer.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env               # then edit .env: set DISCORD_TOKEN (the rest is optional)
+python bot.py
 ```
 
-If the variable is empty or the file does not exist, the bridge silently does nothing — Bamboozled will never crash due to a missing Navi database.
+You should see `Synced N slash command(s)` and `Bamboozled bot is ready!`. Global slash commands can take up to an hour to appear the first time. For instant registration while testing, sync to one server (see the comment in `setup_hook` in `bot.py`).
 
-### Award formula
+Try `/bamboozled help`, then `/bamboozled join` and `/bamboozled start`.
+
+Run the tests with `python -m unittest tests.test_all`. Two tests call the live OpenTDB API and fail when it is unreachable or rate limited.
+
+### 3. Keep it running on a server (Linux, systemd)
+
+```bash
+git clone <your-repo-url> ~/bamboozled-bot && cd ~/bamboozled-bot
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env && nano .env
+mkdir -p logs
+# edit YOUR_USER and the paths in bamboozled.service, then:
+sudo cp bamboozled.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bamboozled
+tail -f logs/bot.log
+```
+
+To update: `git pull && sudo systemctl restart bamboozled`.
+
+## Discord Activity (optional)
+
+The Activity is the same game in an embedded Discord window. `/bamboozled-activity` makes the bot ask the backend for a session and posts a launch button.
+
+### A. Enable the Activity on your existing application
+
+In the same application (skip any step that is already done):
+
+1. **General Information**: copy the **Application ID** into `DISCORD_APPLICATION_ID`, `DISCORD_CLIENT_ID` and `VITE_DISCORD_CLIENT_ID` (all three the same).
+2. **OAuth2**: **Reset Secret**, copy it into `DISCORD_CLIENT_SECRET`.
+3. **Activities > Settings**: enable Activities.
+4. **Activities > URL Mappings**: add a root mapping `/` pointing at the host serving the built frontend, and `/api` pointing at the backend host (without `https://`). The mapping is what lets the Activity reach your servers from inside Discord.
+5. **Activities > Settings > Entry Point** (the Activity's launch command) is created by Discord automatically. `bot.py` already preserves it when syncing commands.
+
+### B. Run the backend
+
+```bash
+cd activity/backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+It reads the root `.env` (`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DB_PATH`, `BOT_INTERNAL_*`). Check `http://localhost:8000/health`.
+
+### C. Build and host the frontend
+
+```bash
+cd activity/frontend
+npm install
+npm run dev        # local development on http://localhost:5173 (proxies /api to :8000)
+npm run build      # production bundle in dist/, host it on any static host
+```
+
+`VITE_*` values come from the root `.env` and are baked in at build time, so rebuild after changing them. Local dev can be exposed to Discord with a tunnel such as `cloudflared tunnel --url http://localhost:5173`; put that tunnel host in the `/` URL mapping.
+
+Point `ACTIVITY_BACKEND_URL` at the backend so the bot can create sessions, then restart the bot. The websocket address in `VITE_BACKEND_URL` has to be reachable from inside Discord, so either allow that host in the URL mappings or route it through the `/api` mapping, and test it in a real Discord client.
+
+## Boli Points with Navi (optional)
+
+Bamboozled can pay out Boli Points in the Navi bot, a separate project. There are two independent routes. Leave both unset to disable.
+
+- **Same machine as Navi:** set `NAVI_DB_PATH` to Navi's SQLite file. At the end of each game the bot writes awards straight into it with plain SQL. A missing path or file is ignored; the bot never crashes because of it.
+- **Activity games:** set `BOT_INTERNAL_API_URL` to Navi's API (port 8080 by default) and `BOT_INTERNAL_SECRET` to the same value as in Navi's `.env`.
 
 | Component | Amount |
 |---|---|
-| Participation | `round(20 × difficulty_multiplier)` |
-| Per correct answer | `correct_answers × 3` (no multiplier) |
-| Winner bonus | `round(50 × dm)` |
-| 2nd place (3+ players) | `round(20 × dm)` |
-| 3rd place (5+ players) | `round(10 × dm)` |
-| Score bonus | `max(0, score) // 50` (+1 per 50 positive pts) |
-| Negative score penalty | `max(score // 100, -20)` (capped at −20) |
+| Participation | `round(20 x difficulty_multiplier)` |
+| Per correct answer | `correct_answers x 3` |
+| Winner bonus | `round(50 x dm)` |
+| 2nd place (3+ players) | `round(20 x dm)` |
+| 3rd place (5+ players) | `round(10 x dm)` |
+| Score bonus | `max(0, score) // 50` |
+| Negative score penalty | `max(score // 100, -20)` |
 
-Difficulty multipliers: Easy = 0.75 × · Medium = 1.0 × · Hard = 1.5 × · Mixed = 1.0 ×
+Multipliers: Easy 0.75, Medium 1.0, Hard 1.5, Mixed 1.0. Only positive totals are written.
 
-Only positive totals are written to Navi's DB. Negative totals appear in the end-of-game embed but are not deducted from Navi.
+## Customising
 
-### Environment variable
+- `game_engine/constants.py`: `BAMBOOZLE_RULE_FILTER_ENABLED` (profanity screen on player-typed rules) and `SAFE_OPENTDB_CATEGORY_IDS` (allowed question categories).
+- `data/custom_questions.json`: fallback questions used when OpenTDB is unreachable. Read at fetch time, no restart needed.
 
-| Variable | Default | Effect |
-|---|---|---|
-| `NAVI_DB_PATH` | *(empty)* | Absolute path to Navi's `astro_bot.db`. Leave empty to disable the bridge. |
+## Data and backups
 
----
-
-## Step 0 — One-time: Create a Discord application for Bamboozled
-
-Bamboozled needs its own bot token. Do this once from any browser.
-
-1. Go to [discord.com/developers/applications](https://discord.com/developers/applications) → **New Application** → name it **Bamboozled**
-2. Left sidebar → **Bot** → **Add Bot**
-3. Under **Token** → **Reset Token** → copy and save it somewhere safe
-4. Scroll down to **Privileged Gateway Intents** — no intents are needed, leave all off
-5. Left sidebar → **OAuth2 → URL Generator**
-   - Scopes: tick **`bot`** and **`applications.commands`**
-   - Bot permissions: tick **`Send Messages`**, **`Read Message History`**, **`Use Slash Commands`**
-6. Copy the generated URL at the bottom → open it in a browser → select your server → **Authorise**
-
----
-
-## Step 1 — Push the code from Windows
-
-On your local machine, commit and push the new `bamboozled/` directory:
-
-```powershell
-cd "C:\Users\Sree\Documents\GitHub\disco_bot"
-git add bamboozled/
-git commit -m "feat: add Bamboozled game"
-git push origin main
-```
-
-> `.env` files are git-ignored and will **not** be pushed — only the `.env.example` template is tracked.
-
----
-
-## Step 2 — Pull on the GCP VM
-
-SSH into your VM (GCP Console → Compute Engine → click **SSH**), then:
-
-```bash
-cd ~/disco_bot
-git pull origin main
-```
-
----
-
-## Step 3 — Set up a virtual environment for Bamboozled
-
-Bamboozled needs `discord.py`, `aiosqlite`, and `aiohttp` — versions that may differ from AstRobot's. Give it its own venv to keep them isolated.
-
-```bash
-cd ~/disco_bot/bamboozled
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-Verify:
-
-```bash
-python -c "import discord, aiosqlite, aiohttp; print('deps OK')"
-# Expected: deps OK
-```
-
----
-
-## Step 4 — Create the `.env` file
-
-```bash
-cd ~/disco_bot/bamboozled
-cp .env.example .env
-nano .env
-```
-
-Replace the placeholder with your real token:
-
-```env
-DISCORD_TOKEN=your_bamboozled_bot_token_here
-```
-
-Press `Ctrl+O` → `Enter` to save, `Ctrl+X` to exit.
-
----
-
-## Step 5 — Install and start the systemd service
-
-The bot runs as a systemd service (same pattern as AstRobot). The service file is included in the repo at `bamboozled.service`.
-
-```bash
-# Create the logs directory the service writes to
-mkdir -p ~/disco_bot/bamboozled/logs
-
-# Copy the service file into place
-sudo cp ~/disco_bot/bamboozled.service /etc/systemd/system/bamboozled.service
-
-# Reload systemd so it picks up the new unit
-sudo systemctl daemon-reload
-
-# Enable the service so it starts automatically on VM reboot
-sudo systemctl enable bamboozled
-
-# Start it now
-sudo systemctl start bamboozled
-```
-
-Confirm it's running:
-
-```bash
-sudo systemctl status bamboozled
-```
-
-You should see `Active: active (running)`. Check the startup log for the ready message:
-
-```bash
-tail -n 20 ~/disco_bot/bamboozled/logs/bot.log
-```
-
-Expected output:
-
-```
-[INFO] __main__: Synced 8 slash command(s).
-[INFO] __main__: Logged in as Bamboozled#1234 (ID: ...)
-[INFO] __main__: Bamboozled bot is ready!
-```
-
-> **Slash command propagation**: Global command sync can take up to 1 hour on first run. For instant registration during testing, see [Fast dev sync](#fast-dev-sync-optional) below.
-
----
-
-## Step 6 — Verify it's working
-
-In Discord, type `/bamboozled` — the command group should appear. Run through:
-
-| Action | Expected |
-|---|---|
-| `/bamboozled help` | Orange embed with game overview and command list |
-| `/bamboozled join` | Bot posts lobby message with your name |
-| `/bamboozled start` | Config UI appears (ephemeral), then game begins |
-| Answer a question | Points awarded, card drawn |
-| `/bamboozled scores` | Ephemeral score list |
-| `/bamboozled leaderboard` | All-time wins embed |
-| `/bamboozled endgame` | Game cancelled, no results saved |
-
----
-
-## Checking logs
-
-```bash
-# Live log stream (Ctrl+C to stop)
-sudo journalctl -u bamboozled -f
-
-# Last 50 lines from the log file
-tail -n 50 ~/disco_bot/bamboozled/logs/bot.log
-
-# Service status
-sudo systemctl status bamboozled
-```
-
----
-
-## Updating the bot after a code change
-
-```bash
-# On your local machine
-git add bamboozled/
-git commit -m "your message"
-git push origin main
-
-# On the VM
-cd ~/disco_bot
-git pull origin main
-sudo systemctl restart bamboozled
-
-# Confirm it came back up
-sudo systemctl status bamboozled
-```
-
----
-
-## Database backup
-
-The SQLite database lives at `bamboozled/db/bamboozled.db` on the VM. It is not committed to git. To copy it to your local machine:
-
-```powershell
-# Run on your local machine (Windows PowerShell)
-# Replace YOUR_VM_NAME and YOUR_ZONE with your GCP instance details
-gcloud compute scp YOUR_VM_NAME:~/disco_bot/bamboozled/db/bamboozled.db ./bamboozled_backup.db --zone=YOUR_ZONE
-```
-
-To find your VM name and zone: GCP Console → Compute Engine → VM Instances.
-
----
-
-## Configuring content safety settings
-
-Both settings live in `bamboozled/game_engine/constants.py`. Edit them on the VM:
-
-```bash
-nano ~/disco_bot/bamboozled/game_engine/constants.py
-```
-
-| Setting | Default | Effect |
-|---|---|---|
-| `BAMBOOZLE_RULE_FILTER_ENABLED` | `True` | Set to `False` to allow any player-typed rule text through unfiltered |
-| `SAFE_OPENTDB_CATEGORY_IDS` | 12 category IDs | Add or remove OpenTDB category IDs to change which topics questions can come from |
-
-After editing, restart the bot: `sudo systemctl restart bamboozled`
-
----
-
-## Customising fallback questions
-
-If OpenTDB is unreachable, the bot uses `bamboozled/data/custom_questions.json`. Add your own questions in this format:
-
-```json
-{
-  "question": "Your question here?",
-  "correct_answer": "The right answer",
-  "incorrect_answers": ["Wrong 1", "Wrong 2", "Wrong 3"],
-  "category": "Category Name",
-  "difficulty": "easy"
-}
-```
-
-No restart needed — the file is read at fetch time.
-
----
-
-## Fast dev sync (optional)
-
-The default global command sync takes up to 1 hour. To register commands instantly in one specific server during development, edit `bamboozled/bot.py` and replace the sync line:
-
-```python
-# In setup_hook, replace:
-synced = await self.tree.sync()
-
-# With (use your server's ID):
-GUILD = discord.Object(id=YOUR_GUILD_ID_HERE)
-self.tree.copy_global_to(guild=GUILD)
-synced = await self.tree.sync(guild=GUILD)
-```
-
-Revert this change before final deployment so the commands are available in all servers.
-
----
+The bot's SQLite database is `db/bamboozled.db`, created on first start and git-ignored. The Activity backend uses `DB_PATH`. Back up by copying the files.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| `RuntimeError: DISCORD_TOKEN not set` | Check `bamboozled/.env` exists and contains the token |
-| `/bamboozled` command doesn't appear after 1 hour | Check the bot was invited with `applications.commands` scope; re-invite if needed |
-| `aiosqlite` or `discord` not found | Make sure you activated `bamboozled/.venv` before running |
-| Bot posts restart notice on startup | Expected — means the bot restarted during an active game. Safe to ignore. |
-| Questions are all the same category | `SAFE_OPENTDB_CATEGORY_IDS` has only one entry — add more in `constants.py` |
-| Bamboozle Rule gets rejected unexpectedly | Rule contains a substring that matches the filter (e.g. "classic" contains "ass"). Set `BAMBOOZLE_RULE_FILTER_ENABLED = False` in `constants.py` to disable |
-| `Too Many Requests` from OpenTDB | OpenTDB has a rate limit — the bot retries once after 3 s, then falls back to `custom_questions.json` automatically |
+| `RuntimeError: DISCORD_TOKEN not set` | `.env` is missing or not in the folder you start the bot from |
+| `/bamboozled` does not appear | Wait up to an hour for global sync; check the bot was invited with `applications.commands` |
+| `/bamboozled-activity` says backend not configured | Set `ACTIVITY_BACKEND_URL` and `DISCORD_APPLICATION_ID`, restart the bot |
+| Activity loads but cannot connect | Check the URL mappings and `VITE_BACKEND_URL`; rebuild the frontend after editing `.env` |
+| Boli not arriving in Navi | Check `NAVI_DB_PATH` exists, or that the two `BOT_INTERNAL_SECRET` values match |
+| Bot posts "restarted mid-game" notice | Expected after a restart during a game |
+| `Too Many Requests` from OpenTDB | The bot retries once, then uses `custom_questions.json` |
