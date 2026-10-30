@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 # ── Make the bamboozled package importable when run directly ──
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -531,6 +533,7 @@ class TestTriviaFallbacks(unittest.TestCase):
 class TestTriviaLiveAPI(unittest.TestCase):
     """Live network tests against the real OpenTDB API."""
 
+    @pytest.mark.network
     def test_fetch_session_token_live(self):
         """OpenTDB should return a non-empty token string."""
         token = run(fetch_session_token())
@@ -564,6 +567,7 @@ class TestTriviaLiveAPI(unittest.TestCase):
         all_answers = [q["correct_answer"]] + q["incorrect_answers"]
         self.assertEqual(len(set(all_answers)), 4, "Answers should be unique")
 
+    @pytest.mark.network
     def test_fetch_multiple_questions_no_duplicates(self):
         """With a session token, sequential fetches should not repeat questions."""
         token = run(fetch_session_token())

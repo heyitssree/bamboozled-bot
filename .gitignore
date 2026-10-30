@@ -20,3 +20,14 @@ activity/frontend/dist/
 activity/backend/data/
 
 # NOTE: .env.example IS tracked (it contains no real secrets)
+
+# v2 (spec section 1.2)
+.env.*
+!.env.example
+web/dist/
+cdk.out/
+infra/bamboozled.env
+data/dev/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
