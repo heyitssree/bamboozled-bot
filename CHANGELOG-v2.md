@@ -62,3 +62,64 @@ Full list with test references is in `docs/rules-as-implemented.md` section 4. T
 2. Decide how to handle git (see Environment notes).
 3. Separate test Discord application, token and test server (owner input #1), before any live check.
 4. Copies of Bamboozled's own databases (owner input #2) when convenient; the Phase 1 gate needs them.
+
+## Phase 1 - Standalone and quick fixes
+
+Status: **built, awaiting owner sign-off.** Branch `v2/phase-1-standalone` (stacked on `v2/phase-0-baseline`).
+
+### Done
+- **Other-project links removed.** Deleted the points bridge module, its table creation, the external database path
+  setting, the internal-API URL and secret settings, the Activity's award client, every award formula and every
+  award embed/column/field (bot, Activity backend and frontend). Where a screen showed an award it now shows nothing
+  extra (rank and score were already on screen).
+- **Numbered migrations** (`bamboozled/db/migrate.py`, `bamboozled/db/migrations/`): `0001_baseline` (the v1 schema),
+  `0002_v2` (matches, match_results, stats, settings). Transactions per file, refuses a database newer than the code,
+  stamps an old pre-migration database as version 1. Runs at bot start-up.
+- **Text modes, `/quizstats` and `/bamboozled stats|leaderboard|reset_scores` use the new tables**
+  (`bamboozled/db/repos/{matches,stats,legacy_text}.py`). Results, stats and the match row are written in one
+  transaction. Personal bests and boards keep their meaning (server and global scope; every ordering ends in user_id).
+  Names are resolved from Discord when displayed (`bamboozled/services/names.py`, 24 h memory cache) and never stored.
+- **Mentions (F3).** The bot is created with `AllowedMentions(everyone=False, roles=False, users=True,
+  replied_user=False)`; player names are escaped (markdown and mentions) where they are captured. Tested against the
+  real `AllowedMentions` objects, including the merge discord.py does for a per-message single-user ping.
+- **Dead filter (F5).** `game_engine/content_filter.py`, its constant and its tests removed. Real screening is Phase 6.
+- **Docs.** README and `.env.example` rewritten to match the code.
+- **Hygiene.** Activity backend: lifespan instead of `on_event`, API docs off unless `BAMBOOZLED_DEBUG=1`, CORS no
+  longer `*`. Dependencies pinned with upper bounds. `LOG_TO_FILE` (on locally, off under systemd). SIGTERM closes the
+  bot cleanly.
+- **`tools/import_own_data.py`** converts the bot's and the Activity's own old tables into the new schema on a copy
+  (refuses in-place and existing outputs, ids and numbers only, deterministic match ids), prints counts before and
+  after and compares the Bamboozled top 10.
+
+### Deviations from the spec text (please confirm)
+1. `0002_v2.sql` does **not** drop `players`, `game_results`, `active_channels`, `server_settings` (the spec's comment
+   said "dropped from v1"). Dropping would destroy data before the import is verified, and the text mode still uses
+   `active_channels` and `server_settings`. A later migration should drop the first two after you confirm the import.
+   `schema_version` is created by the runner instead of by 0002. `custom_questions` skipped (spec: optional).
+2. `tests/test_standalone.py`: the `../` pattern is skipped for `.ts`/`.tsx` files (it flags normal relative imports
+   such as `'../store/gameStore'`), and `.venv`/caches/logs are excluded.
+3. The bot's database default moved from `db/bamboozled.db` to `data/bamboozled.db` (env `BAMBOOZLED_DB_PATH`
+   overrides). **An existing install must copy its file or set that variable**; an old file is upgraded in place by the
+   migration runner (stamped v1, new tables added, nothing dropped).
+4. `/bamboozled leaderboard` now has a true per-server scope in `/quizstats` (the old table had no server id). Old
+   text-mode games imported from `game_results` have no server id (guild 0) and count on global boards only.
+5. Ruff `line-length` set to 130 and rules to E/F/W so the existing files are not mass-reformatted.
+
+### Gate evidence
+| Check | Result |
+|---|---|
+| Full suite, offline | **279 passed, 2 deselected** |
+| `tests/test_all.py` | 117 -> 79 passed: removed `TestDatabase` (replaced by `tests/test_db.py`, 22 tests) and `TestContentFilter` (code deleted); the two non-filter tests in that class were kept |
+| `tests/test_standalone.py` | passes |
+| Grep for the forbidden words outside this file | no hits (only `tests/test_standalone.py`, which defines the patterns) |
+| Characterisation tests | still green after the refactor (rules unchanged); seams moved to `record_match` |
+| Text modes record to new tables | `tests/test_text_modes_record.py`: Bamboozled end-of-game, FFF and Survival save paths run against a real migrated SQLite file |
+| Command snapshot | one intended change: `testmode` description no longer mentions awards |
+| Frontend | `tsc --noEmit` clean |
+
+### Not done at this gate (needs you)
+- **A live game in each text mode** and the **"@everyone typed anywhere no longer pings" check in a real server**: need
+  the separate test Discord application and server (owner input #1). The offline tests above cover the same code paths
+  and the real `AllowedMentions` payloads, but they are not a live run.
+- **Import check against real data**: needs copies of the bot's and Activity's own databases (owner input #2).
+- The six **CONFIRM** items from Phase 0 are still open; they block Phase 2, not this phase.

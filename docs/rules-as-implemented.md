@@ -19,7 +19,7 @@ Sources: `cogs/game.py`, `game_engine/{state,constants,cards,wheel,bamboozle_rul
 | Question time | 30 s; Golden Monkey 15 s; pick (target) 20 s; draw/spin button 10 s then auto-proceeds; law choice 60 s (+10 s view grace) |
 | Correct / wrong / timeout | +100 / -50 / -100 |
 | Single-swing cap | `apply_points` clamps any one change to +-300 (`bypass_cap` exists). Tax, Gift/steal, Switcheroo, Full Reversal write scores directly and are **not** capped |
-| Difficulty multiplier | only used by the Boli award (deleted in Phase 1) |
+| Difficulty multiplier | only used by the old points award (deleted in Phase 1) |
 
 ### 1.2 Turn flow (`_run_turn`, `_run_game`)  (B: TestTurn, TestGameLoop)
 

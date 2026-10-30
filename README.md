@@ -7,7 +7,7 @@ A chaos-trivia Discord bot: players take turns answering questions, draw Bambooz
 | Slash-command bot (`/bamboozled ...`, Survival, Fastest Fingers, stats) | repo root (`bot.py`) | Yes |
 | Discord Activity (`/bamboozled-activity`, a React app plus a FastAPI backend) | `activity/` | Optional |
 
-Boli Points sharing with the Navi bot is optional too. Bamboozled runs fine on its own.
+Bamboozled is a standalone project: it keeps its own results, stats and leaderboards and shares nothing with any other bot.
 
 ## Setup
 
@@ -34,9 +34,10 @@ Copy `.env.example` to `.env`, then fill it in from the table. "Portal" means th
 | `ACTIVITY_BACKEND_URL` | Activity | Where the backend is reachable from the bot. Same machine: `http://localhost:8000`. Hosted: its public `https://` URL, with no trailing slash. |
 | `VITE_BACKEND_URL` | Activity frontend | The backend's websocket address as seen from inside Discord. Local: `ws://localhost:8000`. Hosted: `wss://` plus the backend host. Rebuild the frontend after changing it. |
 | `DB_PATH` | Activity backend | Your choice. The default `data/bamboozled_activity.db` is fine. |
-| `NAVI_DB_PATH` | Boli sharing, same machine | Absolute path to Navi's database file. In Navi it is the `DB_PATH` value, default `<navi-bot>/data/navi.db`. Leave empty to disable. |
-| `BOT_INTERNAL_API_URL` | Boli sharing, Activity games | Navi's API address: `http://<host-or-ip>:8080`, where 8080 is Navi's `API_SERVER_PORT`. Use `http://localhost:8080` if both run on one machine. |
-| `BOT_INTERNAL_SECRET` | Boli sharing, Activity games | You make it up. Run `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` and paste the same value into this `.env` and into Navi's `BOT_INTERNAL_SECRET`. |
+| `BAMBOOZLED_DB_PATH` | Bot (optional) | Where the bot keeps its SQLite database. Default `data/bamboozled.db`. |
+| `LOG_TO_FILE` | Bot (optional) | `1` (default) also writes `logs/bamboozled.log`; set `0` in containers and under systemd (the unit already captures stdout in `logs/bot.log`). |
+| `BAMBOOZLED_DEBUG` | Activity backend (optional) | `1` turns on the interactive API docs. Leave unset in production. |
+| `ACTIVITY_CORS_ORIGINS` | Activity backend (optional) | Comma-separated allowed origins. Default: the local dev server and this application's Discord proxy host. |
 
 For the bot alone, only `DISCORD_TOKEN` is required. The Discord IDs and secrets above are one-time copies from the Portal, and Reset Token / Reset Secret invalidate the previous value.
 
@@ -56,7 +57,9 @@ You should see `Synced N slash command(s)` and `Bamboozled bot is ready!`. Globa
 
 Try `/bamboozled help`, then `/bamboozled join` and `/bamboozled start`.
 
-Run the tests with `python -m unittest tests.test_all`. Two tests call the live OpenTDB API and fail when it is unreachable or rate limited.
+Run the tests with `pip install -r requirements-dev.txt && python -m pytest`. They run fully offline; the two tests that call the live OpenTDB API are marked `network` and skipped by default (`python -m pytest -m network` runs them).
+
+The database is created and upgraded automatically at start-up by numbered migrations in `bamboozled/db/migrations/`.
 
 ### 3. Keep it running on a server (Linux, systemd)
 
@@ -97,7 +100,7 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-It reads the root `.env` (`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DB_PATH`, `BOT_INTERNAL_*`). Check `http://localhost:8000/health`.
+It reads the root `.env` (`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DB_PATH`). Check `http://localhost:8000/health`.
 
 ### C. Build and host the frontend
 
@@ -112,33 +115,14 @@ npm run build      # production bundle in dist/, host it on any static host
 
 Point `ACTIVITY_BACKEND_URL` at the backend so the bot can create sessions, then restart the bot. The websocket address in `VITE_BACKEND_URL` has to be reachable from inside Discord, so either allow that host in the URL mappings or route it through the `/api` mapping, and test it in a real Discord client.
 
-## Boli Points with Navi (optional)
-
-Bamboozled can pay out Boli Points in the Navi bot, a separate project. There are two independent routes. Leave both unset to disable.
-
-- **Same machine as Navi:** set `NAVI_DB_PATH` to Navi's SQLite file. At the end of each game the bot writes awards straight into it with plain SQL. A missing path or file is ignored; the bot never crashes because of it.
-- **Activity games:** set `BOT_INTERNAL_API_URL` to Navi's API (port 8080 by default) and `BOT_INTERNAL_SECRET` to the same value as in Navi's `.env`.
-
-| Component | Amount |
-|---|---|
-| Participation | `round(20 x difficulty_multiplier)` |
-| Per correct answer | `correct_answers x 3` |
-| Winner bonus | `round(50 x dm)` |
-| 2nd place (3+ players) | `round(20 x dm)` |
-| 3rd place (5+ players) | `round(10 x dm)` |
-| Score bonus | `max(0, score) // 50` |
-| Negative score penalty | `max(score // 100, -20)` |
-
-Multipliers: Easy 0.75, Medium 1.0, Hard 1.5, Mixed 1.0. Only positive totals are written.
-
 ## Customising
 
-- `game_engine/constants.py`: `BAMBOOZLE_RULE_FILTER_ENABLED` (profanity screen on player-typed rules) and `SAFE_OPENTDB_CATEGORY_IDS` (allowed question categories).
+- `game_engine/constants.py`: `SAFE_OPENTDB_CATEGORY_IDS` (allowed question categories).
 - `data/custom_questions.json`: fallback questions used when OpenTDB is unreachable. Read at fetch time, no restart needed.
 
 ## Data and backups
 
-The bot's SQLite database is `db/bamboozled.db`, created on first start and git-ignored. The Activity backend uses `DB_PATH`. Back up by copying the files.
+The bot's SQLite database is `data/bamboozled.db` (override with `BAMBOOZLED_DB_PATH`), created on first start and git-ignored. It stores Discord ids and results only; names and avatars are looked up from Discord when shown and never saved. The Activity backend uses `DB_PATH`. Back up by copying the files.
 
 ## Troubleshooting
 
@@ -148,6 +132,5 @@ The bot's SQLite database is `db/bamboozled.db`, created on first start and git-
 | `/bamboozled` does not appear | Wait up to an hour for global sync; check the bot was invited with `applications.commands` |
 | `/bamboozled-activity` says backend not configured | Set `ACTIVITY_BACKEND_URL` and `DISCORD_APPLICATION_ID`, restart the bot |
 | Activity loads but cannot connect | Check the URL mappings and `VITE_BACKEND_URL`; rebuild the frontend after editing `.env` |
-| Boli not arriving in Navi | Check `NAVI_DB_PATH` exists, or that the two `BOT_INTERNAL_SECRET` values match |
 | Bot posts "restarted mid-game" notice | Expected after a restart during a game |
 | `Too Many Requests` from OpenTDB | The bot retries once, then uses `custom_questions.json` |
