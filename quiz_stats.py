@@ -11,20 +11,17 @@ Displays paginated leaderboard (10 per page) from the appropriate table.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Optional
 
-import aiosqlite
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.utils import escape_markdown, escape_mentions
 
-from game_engine.constants import NAVI_DB_PATH
+from bamboozled.db.repos import stats as stats_repo
+from bamboozled.services.names import display_name
 
-# Bamboozled bot's own SQLite DB (separate from Navi DB)
-_BAMBOOZLED_DB_PATH = Path(__file__).parent / "db" / "bamboozled.db"
-
-logger = logging.getLogger("navi.quiz_stats")
+logger = logging.getLogger("bamboozled.quiz_stats")
 
 _PAGE_SIZE = 10
 _MEDALS = ["🥇", "🥈", "🥉"]
@@ -74,93 +71,16 @@ class LeaderboardView(discord.ui.View):
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_fff_leaderboard(guild_id: int, global_scope: bool) -> list[dict]:
-    if not NAVI_DB_PATH or not Path(NAVI_DB_PATH).exists():
-        return []
+async def _fetch(fn, guild_id: int, global_scope: bool, bot, guild) -> list[dict]:
+    """Run a board query and attach display names (resolved now, never stored)."""
     try:
-        async with aiosqlite.connect(NAVI_DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            if global_scope:
-                cursor = await db.execute(
-                    """
-                    SELECT username, correct_answers, total_questions, avg_response_ms, boli_awarded, played_at
-                    FROM fff_scores
-                    ORDER BY correct_answers DESC, avg_response_ms ASC
-                    LIMIT 100
-                    """
-                )
-            else:
-                cursor = await db.execute(
-                    """
-                    SELECT username, correct_answers, total_questions, avg_response_ms, boli_awarded, played_at
-                    FROM fff_scores
-                    WHERE guild_id = ?
-                    ORDER BY correct_answers DESC, avg_response_ms ASC
-                    LIMIT 100
-                    """,
-                    (guild_id,),
-                )
-            rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+        rows = await fn(None if global_scope else guild_id)
     except Exception as exc:
-        logger.warning("quiz_stats: FFF leaderboard fetch failed: %s", exc)
+        logger.warning("quiz_stats: leaderboard fetch failed: %s", exc)
         return []
-
-
-async def _fetch_survival_leaderboard(guild_id: int, global_scope: bool) -> list[dict]:
-    if not NAVI_DB_PATH or not Path(NAVI_DB_PATH).exists():
-        return []
-    try:
-        async with aiosqlite.connect(NAVI_DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            if global_scope:
-                cursor = await db.execute(
-                    """
-                    SELECT username, streak, difficulty, category, boli_awarded, played_at
-                    FROM survival_scores
-                    ORDER BY streak DESC
-                    LIMIT 100
-                    """
-                )
-            else:
-                cursor = await db.execute(
-                    """
-                    SELECT username, streak, difficulty, category, boli_awarded, played_at
-                    FROM survival_scores
-                    WHERE guild_id = ?
-                    ORDER BY streak DESC
-                    LIMIT 100
-                    """,
-                    (guild_id,),
-                )
-            rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
-    except Exception as exc:
-        logger.warning("quiz_stats: Survival leaderboard fetch failed: %s", exc)
-        return []
-
-
-async def _fetch_bamboozled_leaderboard(guild_id: int, global_scope: bool) -> list[dict]:
-    """Query bamboozled.db's players table — Bamboozled tracks its own stats locally."""
-    if not _BAMBOOZLED_DB_PATH.exists():
-        return []
-    try:
-        async with aiosqlite.connect(_BAMBOOZLED_DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            # Bamboozled.db has no guild_id column — global and server views are the same.
-            cursor = await db.execute(
-                """
-                SELECT username, games_won, games_played, total_points_earned
-                FROM players
-                ORDER BY games_won DESC, total_points_earned DESC
-                LIMIT 100
-                """
-            )
-            rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
-    except Exception as exc:
-        logger.warning("quiz_stats: Bamboozled leaderboard fetch failed: %s", exc)
-        return []
+    for row in rows:
+        row["username"] = escape_mentions(escape_markdown(await display_name(bot, row["user_id"], guild)))
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +113,7 @@ def _build_fff_pages(rows: list[dict], scope_label: str) -> list[discord.Embed]:
                 name=f"{medal} {row['username']}",
                 value=(
                     f"✅ {row['correct_answers']}/{row['total_questions']} correct"
-                    f"{speed_str} · 🍮 {row['boli_awarded']} Boli"
+                    f"{speed_str}"
                 ),
                 inline=False,
             )
@@ -228,7 +148,6 @@ def _build_survival_pages(rows: list[dict], scope_label: str) -> list[discord.Em
                 name=f"{medal} {row['username']}",
                 value=(
                     f"🔥 Streak: **{row['streak']}** · {row['difficulty'].title()}{cat_str}"
-                    f" · 🍮 {row['boli_awarded']} Boli"
                 ),
                 inline=False,
             )
@@ -258,15 +177,15 @@ def _build_bamboozled_pages(rows: list[dict], scope_label: str) -> list[discord.
         for i, row in enumerate(page_rows):
             rank = page_start + i + 1
             medal = _MEDALS[rank - 1] if rank <= 3 else f"#{rank}"
-            games_played = row.get("games_played", 0) or 0
+            games_played = row.get("games", 0) or 0
             win_rate = (
-                f"{row['games_won'] / games_played * 100:.0f}% win rate"
+                f"{row['wins'] / games_played * 100:.0f}% win rate"
                 if games_played > 0 else "0% win rate"
             )
             embed.add_field(
                 name=f"{medal} {row['username']}",
                 value=(
-                    f"🏆 {row['games_won']} wins · {win_rate} · "
+                    f"🏆 {row['wins']} wins · {win_rate} · "
                     f"🎮 {games_played} games played"
                 ),
                 inline=False,
@@ -327,13 +246,13 @@ class QuizStatsCog(commands.Cog):
         scope_label = "Global" if global_scope else "This Server"
 
         if mode == "fff":
-            rows = await _fetch_fff_leaderboard(guild_id, global_scope)
+            rows = await _fetch(stats_repo.fff_board, guild_id, global_scope, self.bot, interaction.guild)
             pages = _build_fff_pages(rows, scope_label)
         elif mode == "survival":
-            rows = await _fetch_survival_leaderboard(guild_id, global_scope)
+            rows = await _fetch(stats_repo.survival_board, guild_id, global_scope, self.bot, interaction.guild)
             pages = _build_survival_pages(rows, scope_label)
         elif mode == "bamboozled":
-            rows = await _fetch_bamboozled_leaderboard(guild_id, global_scope)
+            rows = await _fetch(stats_repo.bamboozled_board, guild_id, global_scope, self.bot, interaction.guild)
             pages = _build_bamboozled_pages(rows, scope_label)
         else:
             await interaction.followup.send("⚠️ Unknown mode.", ephemeral=True)

@@ -234,23 +234,3 @@ class BamboozledEngine:
 
     async def check_win(self, state: GameState) -> bool:
         return state.round_number > state.config.total_rounds
-
-    def calculate_boli(self, state: GameState) -> dict[str, int]:
-        """Map discord_id → boli award based on final rankings."""
-        if not state.players:
-            return {}
-
-        sorted_players = sorted(
-            state.players.values(),
-            key=lambda p: p.score,
-            reverse=True,
-        )
-        awards: dict[str, int] = {}
-        boli_tiers = [50, 30, 20]  # 1st, 2nd, 3rd
-
-        for i, player in enumerate(sorted_players):
-            boli = boli_tiers[i] if i < len(boli_tiers) else 10
-            # Participation bonus (top-3 get extra)
-            awards[player.discord_id] = boli
-
-        return awards

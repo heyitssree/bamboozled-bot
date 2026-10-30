@@ -739,19 +739,20 @@ class TestEndgame:
         with legacy_env(script, game) as (cog, ch):
             import cogs.game as G
 
-            async def capture(**kw):
-                saved.update(kw)
-            G.save_game_result.side_effect = capture
+            async def capture(mode, guild_id, results, **kw):
+                saved.update(mode=mode, guild_id=guild_id, winner_id=next(r.user_id for r in results if r.rank == 1),
+                             final_scores={r.user_id: r.score for r in results}, rows=results, **kw)
+            G.record_match.side_effect = capture
             run(cog._run_endgame(ch, game))
-            stats = [c.args for c in G.update_player_stats.call_args_list]
         assert not script.leftover(), script.leftover()
-        return saved, stats, ch, game
+        return saved, saved.get("rows"), ch, game
 
-    def test_highest_score_wins_and_everyone_gets_stats(self):
+    def test_highest_score_wins_and_everyone_is_ranked(self):
         g = make_game(3, scores={1: 300, 2: 900, 3: 600})
         saved, stats, ch, g = self.endgame(g)
-        assert saved["winner_id"] == "2" and saved["final_scores"] == {"1": 300, "2": 900, "3": 600}
-        assert stats == [("1", False, 300), ("2", True, 900), ("3", False, 600)]
+        assert saved["winner_id"] == 2 and saved["final_scores"] == {1: 300, 2: 900, 3: 600}
+        assert [(r.user_id, r.rank, r.score) for r in stats] == [(2, 1, 900), (3, 2, 600), (1, 3, 300)]
+        assert saved["mode"] == "bamboozled" and saved["rounds"] == 5
 
     def test_test_mode_records_nothing(self):
         g = make_game(2, scores={1: 100, 2: 200})
@@ -759,7 +760,7 @@ class TestEndgame:
         with legacy_env(script, g) as (cog, ch):
             import cogs.game as G
             run(cog._run_endgame(ch, g))
-            assert not G.save_game_result.called and not G.update_player_stats.called
+            assert not G.record_match.called
 
     def test_residual_mist_is_lifted_for_the_final_reveal(self):
         g = make_game(2, scores={1: 100, 2: 200})
@@ -770,7 +771,7 @@ class TestEndgame:
     def test_negative_scores_still_rank(self):
         g = make_game(3, scores={1: -300, 2: -100, 3: -900})
         saved, *_ = self.endgame(g)
-        assert saved["winner_id"] == "2"
+        assert saved["winner_id"] == 2
 
     def test_endgame_resets_the_game_back_to_a_lobby(self):
         g = make_game(2, scores={1: 100, 2: 200})
@@ -782,7 +783,7 @@ class TestEndgame:
         saved, _, ch, _ = self.endgame(
             g, wheel=[S.BONUS_ROUND, S.TAX_SEASON], answer=[0, 0])
         # p1: 600 +150 +100 = 850 ; p2: 600 -120 +100 = 580
-        assert saved["winner_id"] == "1" and saved["final_scores"] == {"1": 850, "2": 580, "3": 100}
+        assert saved["winner_id"] == 1 and saved["final_scores"] == {1: 850, 2: 580, 3: 100}
         assert "SUDDEN BAMBOOZLE" in ch.text
 
     def test_tiebreak_repeats_until_one_player_is_ahead(self):
@@ -790,7 +791,7 @@ class TestEndgame:
         saved, *_ = self.endgame(
             g, wheel=[S.BONUS_ROUND, S.BONUS_ROUND, S.BONUS_ROUND, S.BONUS_ROUND], answer=[0, 0, 0, 2])
         # round 1: both 600+150+100 = 850 (tie). round 2: p1 850+150+100=1100 ; p2 850+150-50=950
-        assert saved["winner_id"] == "1" and saved["final_scores"] == {"1": 1100, "2": 950}
+        assert saved["winner_id"] == 1 and saved["final_scores"] == {1: 1100, 2: 950}
 
     def test_only_players_still_tied_for_first_take_part_in_later_tiebreaks(self):
         g = make_game(3, scores={1: 600, 2: 600, 3: 600})
@@ -798,10 +799,10 @@ class TestEndgame:
             g,
             # round 1: p1 +150+100 (850) | p2 +150-50 (700) | p3 +150-50 (700)... then only p1 remains
             wheel=[S.BONUS_ROUND] * 3, answer=[0, 2, 2])
-        assert saved["winner_id"] == "1"
-        assert saved["final_scores"] == {"1": 850, "2": 700, "3": 700}
+        assert saved["winner_id"] == 1
+        assert saved["final_scores"] == {1: 850, 2: 700, 3: 700}
 
     def test_tiebreak_question_timeout_costs_100(self):
         g = make_game(2, scores={1: 600, 2: 600})
         saved, *_ = self.endgame(g, wheel=[S.MYSTIC_MIST, S.MYSTIC_MIST], answer=["timeout", 0])
-        assert saved["winner_id"] == "2" and saved["final_scores"] == {"1": 500, "2": 700}
+        assert saved["winner_id"] == 2 and saved["final_scores"] == {1: 500, 2: 700}

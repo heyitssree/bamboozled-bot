@@ -10,6 +10,8 @@ from game_engine.constants import MAX_SINGLE_SWING_FIXED, MIST_TURN_DURATION, SA
 class GameState:
     channel_id: int
     host_id: int
+    guild_id: int = 0
+    started_at: Optional[str] = None   # ISO time the game went active (for the match record)
 
     players: List[int] = field(default_factory=list)
     player_names: Dict[int, str] = field(default_factory=dict)
@@ -40,7 +42,7 @@ class GameState:
 
     # Per-player consecutive correct answer streak (reset on wrong/timeout)
     consecutive_correct: Dict[int, int] = field(default_factory=dict)
-    # Per-player total correct answers this game (for Boli calculation)
+    # Per-player total correct answers this game (recorded in the match result)
     correct_answer_count: Dict[int, int] = field(default_factory=dict)
     # Seconds the active player took to answer this turn (set after answer/timeout)
     answer_time_seconds: float = 0.0
@@ -52,7 +54,7 @@ class GameState:
     question_difficulty: Optional[str] = None   # "easy"/"medium"/"hard"/None for mixed
     question_categories: List[int] = field(default_factory=list)  # empty = all categories
 
-    # Test mode: no Boli points awarded, no stats recorded (admin-toggled per guild)
+    # Test mode: no stats recorded (admin-toggled per guild)
     test_mode: bool = False
 
     # Thread ID if game was moved to a Discord thread; None if running in main channel

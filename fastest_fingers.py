@@ -8,7 +8,7 @@ Rules:
 - Per question: 10-second timer, A/B/C/D buttons, one answer per player
 - Scoring: first correct = 100pts, subsequent correct = 75pts, wrong/no answer = 0
 - AFK kick: 2 consecutive non-answers → removed from game
-- Boli: 1st = 50, 2nd = 30, 3rd = 15, any finisher = 5
+- Results (rank, points, correct answers, average response time) are recorded in the match tables
 """
 
 from __future__ import annotations
@@ -19,16 +19,14 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-import aiosqlite
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from db.navi_bridge import award_boli
-from game_engine.constants import NAVI_DB_PATH
+from bamboozled.services.names import safe_name
+from bamboozled.db.repos.matches import ResultRow, ranked, record_match
 from game_engine.trivia import fetch_question_any, shuffle_answers
 from session_registry import (
     add_player,
@@ -38,7 +36,7 @@ from session_registry import (
     remove_player,
 )
 
-logger = logging.getLogger("navi.fastest_fingers")
+logger = logging.getLogger("bamboozled.fastest_fingers")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -50,9 +48,6 @@ _FFF_REVEAL_PAUSE = 3           # seconds between question reveal and next quest
 _FFF_MAX_PLAYERS = 10
 _FFF_MIN_PLAYERS = 2
 _FFF_AFK_KICK_THRESHOLD = 2    # consecutive non-answers before kick (Fix 4)
-
-_BOLI_PLACEMENT = {1: 50, 2: 30, 3: 15}
-_BOLI_PARTICIPATION = 5          # for all non-placed finishers
 
 _FIRST_CORRECT_PTS = 100
 _SUBSEQUENT_CORRECT_PTS = 75
@@ -110,6 +105,7 @@ class FFFSession:
     response_times: dict[int, list[int]] = field(default_factory=dict)
     # user_id → list of ms taken to answer correctly
     afk_counts: dict[int, int] = field(default_factory=dict)     # Fix 4: AFK tracker
+    correct: dict[int, int] = field(default_factory=dict)        # user_id → correct answers this game
     started_at: datetime = field(default_factory=datetime.utcnow)
     last_activity: float = field(default_factory=time.time)      # Fix 3b: inactivity watch
 
@@ -170,7 +166,7 @@ class FFFLobbyView(discord.ui.View):
             )
             return
 
-        session.players[uid] = interaction.user.display_name
+        session.players[uid] = safe_name(interaction.user.display_name)
         session.scores[uid] = 0
         session.last_activity = time.time()
         add_player(session.channel_id, uid)
@@ -180,7 +176,7 @@ class FFFLobbyView(discord.ui.View):
         except discord.HTTPException:
             await interaction.response.defer()
         await interaction.followup.send(
-            f"🟢 **{interaction.user.display_name}** joined the lobby! "
+            f"🟢 **{safe_name(interaction.user.display_name)}** joined the lobby! "
             f"({len(session.players)}/{_FFF_MAX_PLAYERS} players)"
         )
 
@@ -420,34 +416,23 @@ def _build_results_embed(session: FFFSession, total_q: int, early: bool = False)
 # ---------------------------------------------------------------------------
 
 
-async def _save_result_to_navi_db(session: FFFSession, total_q: int) -> None:
-    """Save FFF game results to the Navi DB (fff_scores table)."""
-    if not NAVI_DB_PATH or not Path(NAVI_DB_PATH).exists():
+async def _save_result(session: FFFSession, total_q: int) -> None:
+    """Record the finished game: one match, a result per remaining player, stats updated in the same transaction."""
+    scores = {uid: session.scores.get(uid, 0) for uid in session.players}
+    if not scores:
         return
-
-    sorted_players = sorted(session.players, key=lambda uid: session.scores.get(uid, 0), reverse=True)
+    rows = []
+    for uid, rank in ranked(scores):
+        times = session.response_times.get(uid, [])
+        rows.append(ResultRow(
+            uid, rank, scores[uid], session.correct.get(uid, 0),
+            {"total_questions": total_q, "avg_response_ms": int(sum(times) / len(times)) if times else None},
+        ))
     try:
-        async with aiosqlite.connect(NAVI_DB_PATH) as db:
-            for uid in sorted_players:
-                correct = session.scores.get(uid, 0) // _SUBSEQUENT_CORRECT_PTS  # approximate
-                times = session.response_times.get(uid, [])
-                avg_ms = int(sum(times) / len(times)) if times else None
-                game_id = f"fff_{session.session_id}_{uid}"
-                boli = _BOLI_PLACEMENT.get(sorted_players.index(uid) + 1, _BOLI_PARTICIPATION)
-
-                await db.execute(
-                    """
-                    INSERT OR IGNORE INTO fff_scores
-                        (game_id, user_id, guild_id, username, correct_answers,
-                         total_questions, avg_response_ms, boli_awarded)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (game_id, uid, session.guild_id, session.players[uid],
-                     correct, total_q, avg_ms, boli),
-                )
-            await db.commit()
+        await record_match("fff", session.guild_id, rows, started_at=session.started_at.isoformat(),
+                           rounds=total_q)
     except Exception as exc:
-        logger.warning("FFF: failed to save results to Navi DB: %s", exc)
+        logger.warning("FFF: failed to save results: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +503,7 @@ class FastestFingersCog(commands.Cog):
         timestamp = datetime.utcnow().strftime("%b %d %H:%M")
         try:
             announce_msg = await interaction.channel.send(
-                f"⚡ **{interaction.user.display_name}** is starting **Fastest Fingers First!** "
+                f"⚡ **{safe_name(interaction.user.display_name)}** is starting **Fastest Fingers First!** "
                 f"Join using the button below."
             )
             thread = await announce_msg.create_thread(
@@ -545,7 +530,7 @@ class FastestFingersCog(commands.Cog):
             channel_id=thread.id,
             guild_id=interaction.guild.id,
         )
-        session.players[interaction.user.id] = interaction.user.display_name
+        session.players[interaction.user.id] = safe_name(interaction.user.display_name)
         session.scores[interaction.user.id] = 0
 
         if not register_session(thread.id, "fff", interaction.user.id):
@@ -736,6 +721,7 @@ class FastestFingersCog(commands.Cog):
                 if ans_idx == correct_idx:
                     response_ms = ts_ms - q_start_ms
                     session.response_times.setdefault(uid, []).append(response_ms)
+                    session.correct[uid] = session.correct.get(uid, 0) + 1
                     if not session.first_correct_claimed:
                         session.scores[uid] = session.scores.get(uid, 0) + _FIRST_CORRECT_PTS
                         session.first_correct_claimed = True
@@ -790,25 +776,8 @@ class FastestFingersCog(commands.Cog):
         results_embed = _build_results_embed(session, total_q, early=early)
         await thread.send(embed=results_embed)
 
-        # Award Boli
-        sorted_players = sorted(session.players, key=lambda uid: session.scores.get(uid, 0), reverse=True)
-        boli_embed = discord.Embed(title="🍮 Boli Points Awarded", color=discord.Color.gold())
-        boli_tasks = []
-        for i, uid in enumerate(sorted_players):
-            placement = i + 1
-            boli = _BOLI_PLACEMENT.get(placement, _BOLI_PARTICIPATION)
-            name = session.players[uid]
-            medal = _MEDALS[i] if i < 3 else f"#{placement}"
-            boli_embed.add_field(name=f"{medal} {name}", value=f"+{boli} Boli", inline=False)
-            boli_tasks.append(award_boli(uid, name, boli, reason=f"FFF placement #{placement}", game_id=f"fff_{session.session_id}_{uid}", source_game="fff"))
-
-        if boli_tasks:
-            await asyncio.gather(*boli_tasks, return_exceptions=True)
-
-        await thread.send(embed=boli_embed)
-
         # Persist results
-        await _save_result_to_navi_db(session, total_q)
+        await _save_result(session, total_q)
 
         # Fix 2: lock thread immediately after game ends
         await asyncio.sleep(3)

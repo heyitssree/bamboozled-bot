@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -11,7 +12,6 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from boli_client import award_boli
 from config import settings
 from db import close_session, init_db, record_results, record_session
 from game_engine import BamboozledEngine
@@ -22,24 +22,47 @@ from session_manager import SessionManager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bamboozled.activity.main")
 
-app = FastAPI(title="Bamboozled Activity API", version="1.0")
+DEBUG = os.getenv("BAMBOOZLED_DEBUG") == "1"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await init_db()
+    logger.info("Bamboozled Activity backend started.")
+    yield
+
+
+# Interactive API docs are only served when BAMBOOZLED_DEBUG=1.
+app = FastAPI(
+    title="Bamboozled Activity API",
+    version="1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if DEBUG else None,
+    redoc_url="/redoc" if DEBUG else None,
+    openapi_url="/openapi.json" if DEBUG else None,
+)
+
+
+def _cors_origins() -> list[str]:
+    configured = os.getenv("ACTIVITY_CORS_ORIGINS")
+    if configured:
+        return [o.strip() for o in configured.split(",") if o.strip()]
+    origins = ["http://localhost:5173"]
+    if settings.DISCORD_CLIENT_ID:
+        origins.append(f"https://{settings.DISCORD_CLIENT_ID}.discordsays.com")
+    return origins
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 manager = SessionManager()
 engine = BamboozledEngine()
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    await init_db()
-    logger.info("Bamboozled Activity backend started.")
 
 
 # ---------------------------------------------------------------------------
@@ -294,8 +317,6 @@ async def _spin_wheel_and_broadcast(session_id: str, state) -> None:
 
 async def _handle_game_over(session_id: str, state) -> None:
     state.phase = GamePhase.ENDED
-    boli_awards = engine.calculate_boli(state)
-
     sorted_players = sorted(
         state.players.values(), key=lambda p: p.score, reverse=True
     )
@@ -305,7 +326,6 @@ async def _handle_game_over(session_id: str, state) -> None:
             "username": p.username,
             "final_score": p.score,
             "rank": i + 1,
-            "boli_awarded": boli_awards.get(p.discord_id, 0),
         }
         for i, p in enumerate(sorted_players)
     ]
@@ -317,13 +337,11 @@ async def _handle_game_over(session_id: str, state) -> None:
         {
             "type": "GAME_OVER",
             "results": results,
-            "boli_awards": boli_awards,
             "state": state.to_dict(),
         },
     )
 
-    # Persist and award Boli
+    # Persist
     await record_results(session_id, results)
     await close_session(session_id)
-    await award_boli(session_id, boli_awards)
     await manager.end_session(session_id)

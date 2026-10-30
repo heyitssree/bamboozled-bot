@@ -33,7 +33,6 @@ interface GameStore {
 
   // Game over
   gameResults: GameResult[]
-  boliAwards: Record<string, number>
 
   // Actions
   setWs: (ws: WebSocket) => void
@@ -41,7 +40,7 @@ interface GameStore {
   setMyPlayerId: (id: string) => void
   setConnected: (v: boolean) => void
   applyStateUpdate: (state: ServerGameState) => void
-  setGameOver: (results: GameResult[], boliAwards: Record<string, number>, state: ServerGameState) => void
+  setGameOver: (results: GameResult[], state: ServerGameState) => void
   sendMessage: (msg: object) => void
 }
 
@@ -66,7 +65,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   timePerQuestion: 30,
 
   gameResults: [],
-  boliAwards: {},
 
   setWs: (ws) => set({ ws }),
   setSessionId: (id) => set({ sessionId: id }),
@@ -92,10 +90,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     })
   },
 
-  setGameOver: (results, boliAwards, state) => {
+  setGameOver: (results, state) => {
     set({
       gameResults: results,
-      boliAwards,
       phase: 'ended',
       players: state.players,
     })

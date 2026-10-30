@@ -8,8 +8,7 @@ Rules:
 - One wrong answer or timeout = game over; Give Up at any time
 - No question cap — runs until death
 - Score = streak (number of correct answers before dying)
-- Boli formula: min(streak * multiplier, 200)
-  multipliers: easy=2, medium=4, hard=7
+- Results are recorded in the match tables; the personal best is read from them
 """
 
 from __future__ import annotations
@@ -20,16 +19,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-import aiosqlite
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from db.navi_bridge import award_boli
-from game_engine.constants import NAVI_DB_PATH
+from bamboozled.services.names import safe_name
+from bamboozled.db.repos.matches import ResultRow, record_match
+from bamboozled.db.repos.stats import survival_best
 from game_engine.trivia import shuffle_answers
 from game_engine.trivia_api import SLUG_TO_DISPLAY, fetch_question_tapi
 from session_registry import (
@@ -40,7 +38,7 @@ from session_registry import (
     remove_player,
 )
 
-logger = logging.getLogger("navi.survival")
+logger = logging.getLogger("bamboozled.survival")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -48,13 +46,6 @@ logger = logging.getLogger("navi.survival")
 
 _SURVIVAL_TIMEOUT = 15          # seconds per question
 _TIMER_UPDATE_INTERVAL = 5      # edit embed every N seconds to show countdown
-
-_DIFFICULTY_MULTIPLIER: dict[str, int] = {
-    "easy": 2,
-    "medium": 4,
-    "hard": 7,
-}
-_MAX_BOLI = 200
 
 _ANSWER_LABELS = ["A", "B", "C", "D"]
 
@@ -216,7 +207,6 @@ def _correct_embed(streak: int) -> discord.Embed:
 async def _build_death_embed(
     session: SurvivalSession,
     reason: str,
-    boli: int,
     personal_best: int,
     is_new_pb: bool,
 ) -> discord.Embed:
@@ -240,7 +230,6 @@ async def _build_death_embed(
     embed.add_field(name="📊 Difficulty", value=session.difficulty.title(), inline=True)
     if session.category_name:
         embed.add_field(name="📚 Category", value=session.category_name, inline=True)
-    embed.add_field(name="🍮 Boli Earned", value=f"+{boli}", inline=True)
     if not is_new_pb and personal_best > 0:
         embed.add_field(name="🏆 Your Best", value=str(personal_best), inline=True)
     elif is_new_pb:
@@ -250,45 +239,25 @@ async def _build_death_embed(
 
 
 
-async def _save_result_to_navi_db(session: SurvivalSession, boli: int) -> int:
-    """Save result and return personal best streak (prior to this game, for comparison)."""
-    if not NAVI_DB_PATH or not Path(NAVI_DB_PATH).exists():
-        return 0
-    cat_name = session.category_name
+async def _previous_best(session: SurvivalSession) -> int:
+    """Highest streak before this run, at the same difficulty and category."""
     try:
-        async with aiosqlite.connect(NAVI_DB_PATH) as db:
-            # Fetch previous best
-            if cat_name:
-                cursor = await db.execute(
-                    "SELECT MAX(streak) FROM survival_scores "
-                    "WHERE user_id = ? AND difficulty = ? AND category = ?",
-                    (session.player_id, session.difficulty, cat_name),
-                )
-            else:
-                cursor = await db.execute(
-                    "SELECT MAX(streak) FROM survival_scores "
-                    "WHERE user_id = ? AND difficulty = ? AND category IS NULL",
-                    (session.player_id, session.difficulty),
-                )
-            row = await cursor.fetchone()
-            prev_best = int(row[0]) if row and row[0] is not None else 0
+        return await survival_best(session.player_id, session.difficulty, session.category_name)
+    except Exception as exc:
+        logger.warning("Survival: failed to read personal best: %s", exc)
+        return 0
 
-            # Save this result
-            game_id = f"surv_{session.session_id}"
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO survival_scores
-                    (game_id, user_id, guild_id, username, streak, difficulty, category, boli_awarded)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (game_id, session.player_id, session.guild_id, session.username,
-                 session.streak, session.difficulty, cat_name, boli),
-            )
-            await db.commit()
-        return prev_best
+
+async def _save_result(session: SurvivalSession, reason: str) -> None:
+    try:
+        await record_match(
+            "survival", session.guild_id,
+            [ResultRow(session.player_id, 1, session.streak, session.streak, {"reason": reason})],
+            started_at=session.started_at.isoformat(), difficulty=session.difficulty,
+            category=session.category_name,
+        )
     except Exception as exc:
         logger.warning("Survival: failed to save result: %s", exc)
-        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +322,7 @@ class SurvivalCog(commands.Cog):
 
         # Create private thread
         timestamp = datetime.utcnow().strftime("%b %d %H:%M")
-        username = interaction.user.display_name
+        username = safe_name(interaction.user.display_name)
         try:
             announce_msg = await interaction.channel.send(
                 f"💀 **{username}** is entering **Survival Mode!** Wish them luck…"
@@ -513,29 +482,13 @@ class SurvivalCog(commands.Cog):
                 death_reason = "wrong"
                 break
 
-        # Compute Boli — 0 if player gave up voluntarily
-        multiplier = _DIFFICULTY_MULTIPLIER.get(difficulty, 4)
-        boli = 0 if death_reason == "quit" else min(session.streak * multiplier, _MAX_BOLI)
-
-        # Save result and get personal best
-        prev_best = await _save_result_to_navi_db(session, boli)
+        # Personal best is read before this run is saved
+        prev_best = await _previous_best(session)
         is_new_pb = session.streak > prev_best and session.streak > 0 and death_reason != "quit"
+        await _save_result(session, death_reason)
 
-        # Build and send death embed
-        death_embed = await _build_death_embed(session, death_reason, boli, prev_best, is_new_pb)
+        death_embed = await _build_death_embed(session, death_reason, prev_best, is_new_pb)
         await thread.send(embed=death_embed)
-
-        if boli > 0:
-            game_id = f"surv_{session.session_id}"
-            await award_boli(
-                session.player_id,
-                session.username,
-                boli,
-                reason=f"Survival: {session.difficulty}, streak {session.streak}",
-                game_id=game_id,
-                source_game="survival",
-            )
-            await thread.send(f"🍮 **+{boli} Boli** awarded to **{session.username}**!")
 
         # Fix 2: Lock thread immediately (read-only) after game ends
         await asyncio.sleep(3)

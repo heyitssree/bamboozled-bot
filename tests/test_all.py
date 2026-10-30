@@ -7,7 +7,7 @@ Sections:
   3. Cards           – draw distribution + flavour coverage
   4. Wheel           – spin distribution + Monkey's Choice
   5. Trivia          – HTML decode, shuffle, live OpenTDB API, fallbacks
-  6. Database        – full CRUD via temp in-memory DB
+  6. Database        – moved to tests/test_db.py
   7. Game-flow logic – isolated helpers from the cog (no Discord objects)
 
 Run from inside bamboozled/:
@@ -19,15 +19,11 @@ Run from inside bamboozled/:
 import asyncio
 import html
 import json
-import os
 import random
 import sys
-import tempfile
-import traceback
 import unittest
 from pathlib import Path
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -59,7 +55,6 @@ from game_engine.constants import (
     WANGO_AGAIN_WHEEL_DEPTH_LIMIT,
     DOUBLE_WANGO_CHAIN_LIMIT,
 )
-from game_engine.content_filter import is_clean
 from game_engine.state import GameState
 from game_engine.bamboozle_rules import make_active_rule
 from game_engine.cards import (
@@ -591,173 +586,6 @@ class TestTriviaLiveAPI(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# 6. Database
-# ─────────────────────────────────────────────────────────────
-
-class TestDatabase(unittest.IsolatedAsyncioTestCase):
-    """All DB tests use a temporary file so they don't touch the real DB."""
-
-    async def asyncSetUp(self):
-        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        self._tmp.close()
-        self._db_path = Path(self._tmp.name)
-        # Patch the module-level _DB_PATH
-        import db.database as dbmod
-        self._orig_path = dbmod._DB_PATH
-        dbmod._DB_PATH = self._db_path
-        from db.database import init_db
-        await init_db()
-
-    async def asyncTearDown(self):
-        import db.database as dbmod
-        dbmod._DB_PATH = self._orig_path
-        try:
-            self._db_path.unlink()
-        except Exception:
-            pass
-
-    async def test_tables_created(self):
-        import aiosqlite
-        async with aiosqlite.connect(self._db_path) as db:
-            async with db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ) as cur:
-                tables = {row[0] for row in await cur.fetchall()}
-        self.assertIn("players", tables)
-        self.assertIn("game_results", tables)
-        self.assertIn("active_channels", tables)
-
-    async def test_upsert_player_insert(self):
-        from db.database import upsert_player, get_player_stats
-        await upsert_player("111", "Alice")
-        row = await get_player_stats("111")
-        self.assertIsNotNone(row)
-        username, played, won, pts = row
-        self.assertEqual(username, "Alice")
-        self.assertEqual(played, 0)
-        self.assertEqual(won, 0)
-        self.assertEqual(pts, 0)
-
-    async def test_upsert_player_updates_name(self):
-        from db.database import upsert_player, get_player_stats
-        await upsert_player("222", "Bob")
-        await upsert_player("222", "Bobby")
-        row = await get_player_stats("222")
-        self.assertEqual(row[0], "Bobby")
-
-    async def test_update_player_stats_win(self):
-        from db.database import upsert_player, update_player_stats, get_player_stats
-        await upsert_player("333", "Charlie")
-        await update_player_stats("333", won=True, final_score=800)
-        row = await get_player_stats("333")
-        _, played, won, pts = row
-        self.assertEqual(played, 1)
-        self.assertEqual(won, 1)
-        self.assertEqual(pts, 800)
-
-    async def test_update_player_stats_loss(self):
-        from db.database import upsert_player, update_player_stats, get_player_stats
-        await upsert_player("444", "Dave")
-        await update_player_stats("444", won=False, final_score=200)
-        row = await get_player_stats("444")
-        _, played, won, pts = row
-        self.assertEqual(played, 1)
-        self.assertEqual(won, 0)
-        self.assertEqual(pts, 200)
-
-    async def test_negative_score_stored_as_zero(self):
-        """Negative final scores should contribute 0 to total_points_earned."""
-        from db.database import upsert_player, update_player_stats, get_player_stats
-        await upsert_player("555", "Eve")
-        await update_player_stats("555", won=False, final_score=-300)
-        row = await get_player_stats("555")
-        _, _, _, pts = row
-        self.assertEqual(pts, 0)
-
-    async def test_multiple_games_accumulate(self):
-        from db.database import upsert_player, update_player_stats, get_player_stats
-        await upsert_player("666", "Frank")
-        await update_player_stats("666", won=True, final_score=500)
-        await update_player_stats("666", won=False, final_score=300)
-        row = await get_player_stats("666")
-        _, played, won, pts = row
-        self.assertEqual(played, 2)
-        self.assertEqual(won, 1)
-        self.assertEqual(pts, 800)
-
-    async def test_save_game_result(self):
-        from db.database import save_game_result
-        import aiosqlite
-        await save_game_result(
-            channel_id="99",
-            winner_id="111",
-            player_count=3,
-            final_scores={"111": 800, "112": 600, "113": 400},
-        )
-        async with aiosqlite.connect(self._db_path) as db:
-            async with db.execute("SELECT * FROM game_results") as cur:
-                rows = await cur.fetchall()
-        self.assertEqual(len(rows), 1)
-        _id, played_at, cid, winner, count, scores_json = rows[0]
-        self.assertEqual(cid, "99")
-        self.assertEqual(winner, "111")
-        self.assertEqual(count, 3)
-        scores = json.loads(scores_json)
-        self.assertEqual(scores["111"], 800)
-
-    async def test_leaderboard_ordering(self):
-        from db.database import upsert_player, update_player_stats, get_leaderboard
-        for uid, name, wins in [("a", "Zara", 5), ("b", "Adam", 1), ("c", "Maria", 3)]:
-            await upsert_player(uid, name)
-            for _ in range(wins):
-                await update_player_stats(uid, won=True, final_score=500)
-        board = await get_leaderboard()
-        self.assertEqual(board[0][0], "Zara")   # most wins first
-        self.assertEqual(board[1][0], "Maria")
-        self.assertEqual(board[2][0], "Adam")
-
-    async def test_leaderboard_empty(self):
-        from db.database import get_leaderboard
-        board = await get_leaderboard()
-        self.assertEqual(board, [])
-
-    async def test_get_player_stats_nonexistent(self):
-        from db.database import get_player_stats
-        row = await get_player_stats("nonexistent_id")
-        self.assertIsNone(row)
-
-    async def test_active_channels_register_unregister(self):
-        from db.database import (
-            register_active_channel,
-            unregister_active_channel,
-            get_orphaned_channels,
-        )
-        await register_active_channel("ch1")
-        await register_active_channel("ch2")
-        await unregister_active_channel("ch1")
-        orphans = await get_orphaned_channels()
-        self.assertIn("ch2", orphans)
-        self.assertNotIn("ch1", orphans)
-
-    async def test_get_orphaned_channels_clears_table(self):
-        from db.database import register_active_channel, get_orphaned_channels
-        import aiosqlite
-        await register_active_channel("ch_x")
-        await get_orphaned_channels()
-        async with aiosqlite.connect(self._db_path) as db:
-            async with db.execute("SELECT COUNT(*) FROM active_channels") as cur:
-                count = (await cur.fetchone())[0]
-        self.assertEqual(count, 0)
-
-    async def test_idempotent_register(self):
-        from db.database import register_active_channel, get_orphaned_channels
-        await register_active_channel("dup")
-        await register_active_channel("dup")  # should not raise
-        orphans = await get_orphaned_channels()
-        self.assertEqual(orphans.count("dup"), 1)
-
-
-# ─────────────────────────────────────────────────────────────
 # 7. Game-flow logic (no Discord objects)
 # ─────────────────────────────────────────────────────────────
 
@@ -986,111 +814,10 @@ class TestGameFlowLogic(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# 8b. Content Filter
+# 8b. Trivia categories
 # ─────────────────────────────────────────────────────────────
 
-class TestContentFilter(unittest.TestCase):
-
-    # ── Clean inputs ──────────────────────────────────────────
-
-    def test_normal_rule_passes(self):
-        self.assertTrue(is_clean("Everyone must clap after each correct answer."))
-
-    def test_empty_string_passes(self):
-        self.assertTrue(is_clean(""))
-
-    def test_game_related_rule_passes(self):
-        self.assertTrue(is_clean("Whoever spins the Wheel must stand up."))
-
-    def test_numbers_and_punctuation_pass(self):
-        self.assertTrue(is_clean("Add 50 points if you answer in under 5 seconds!"))
-
-    def test_mixed_case_clean_passes(self):
-        self.assertTrue(is_clean("YOU MUST SAY 'BAMBOOZLED' AFTER EVERY TURN."))
-
-    def test_scientific_words_pass(self):
-        self.assertTrue(is_clean("If you get Geography, you gain double points."))
-
-    def test_long_clean_rule_passes(self):
-        rule = "The player to the left of whoever draws a Wango card must do a victory dance. " \
-               "This applies only on even-numbered rounds."
-        self.assertTrue(is_clean(rule))
-
-    # ── Obvious blocked inputs ────────────────────────────────
-
-    def test_f_word_blocked(self):
-        self.assertFalse(is_clean("fuck this game"))
-
-    def test_s_word_blocked(self):
-        self.assertFalse(is_clean("this is shit"))
-
-    def test_slur_blocked(self):
-        self.assertFalse(is_clean("you're such a faggot"))
-
-    def test_racial_slur_blocked(self):
-        self.assertFalse(is_clean("go back to your country you nigger"))
-
-    def test_kys_phrase_blocked(self):
-        self.assertFalse(is_clean("kys loser"))
-
-    def test_kill_yourself_blocked(self):
-        self.assertFalse(is_clean("kill yourself if you lose"))
-
-    def test_sexual_term_blocked(self):
-        self.assertFalse(is_clean("show us your cock"))
-
-    # ── Leet-speak bypass attempts ────────────────────────────
-
-    def test_leet_f_word_blocked(self):
-        # "fvck" is an explicit entry in the word list
-        self.assertFalse(is_clean("fvck this"))
-        # "f*ck" strips punctuation to "fck", which is in the word list
-        self.assertFalse(is_clean("f*ck off"))
-
-    def test_leet_s_word_blocked(self):
-        self.assertFalse(is_clean("5h1t"))
-
-    def test_asterisk_bypass_blocked(self):
-        # Punctuation stripped before check, so f*ck -> fck
-        self.assertFalse(is_clean("f*ck you"))
-
-    def test_dotted_bypass_blocked(self):
-        self.assertFalse(is_clean("f.u.c.k"))
-
-    def test_spaced_bypass_blocked(self):
-        self.assertFalse(is_clean("s h i t"))
-
-    def test_mixed_case_bypass_blocked(self):
-        self.assertFalse(is_clean("FuCk ThIs"))
-
-    # ── Edge cases ────────────────────────────────────────────
-
-    def test_unicode_lookalike_normalised(self):
-        # Accented characters should be stripped to ASCII equivalents
-        # so "fück" normalises to "fck" which matches the blocked pattern
-        result = is_clean("fück")   # f + u-umlaut + ck
-        # After NFKD + ASCII encode: u-umlaut -> u, so becomes "fuck" -> blocked
-        self.assertFalse(result)
-
-    def test_category_name_not_blocked(self):
-        # "ass" appears in words like "classic" or "assassin"
-        # Our filter checks for substring presence — acknowledge this is a known
-        # trade-off (false positives on "class", "assassin" etc.) but the
-        # is_clean function deliberately errs on the side of caution.
-        # This test documents the current behaviour rather than asserting clean.
-        result = is_clean("classic trivia rules apply")
-        # "ass" is in "classic" after stripping -> blocked. Known limitation.
-        self.assertIsInstance(result, bool)   # just verify it returns a bool
-
-    def test_die_in_context(self):
-        # "die" is blocked because it can be used in "you should die"
-        self.assertFalse(is_clean("you should die"))
-
-    def test_rejection_reason_returns_string(self):
-        from game_engine.content_filter import rejection_reason
-        msg = rejection_reason()
-        self.assertIsInstance(msg, str)
-        self.assertGreater(len(msg), 0)
+class TestTriviaCategories(unittest.TestCase):
 
     def test_opentdb_categories_constant_nonempty(self):
         from game_engine.constants import SAFE_OPENTDB_CATEGORY_IDS
@@ -1102,7 +829,6 @@ class TestContentFilter(unittest.TestCase):
 
     def test_live_question_category_is_from_whitelist(self):
         """Questions fetched with category restriction come from the safe list."""
-        from game_engine.constants import SAFE_OPENTDB_CATEGORY_IDS
         from game_engine.trivia import fetch_question
         # Patch random.choice so we always pick the first category
         with patch("game_engine.trivia.random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else random.choice(x)):
@@ -1129,9 +855,8 @@ if __name__ == "__main__":
         TestTriviaHelpers,
         TestTriviaFallbacks,
         TestTriviaLiveAPI,
-        TestDatabase,
         TestGameFlowLogic,
-        TestContentFilter,
+        TestTriviaCategories,
     ]
 
     for cls in all_classes:

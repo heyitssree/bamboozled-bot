@@ -3,7 +3,7 @@ import asyncio
 import logging
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import discord
@@ -11,19 +11,15 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs.game_config_view import GameConfigView
-from db.database import (
-    get_leaderboard,
-    get_player_stats,
+from bamboozled.db.repos.legacy_text import (
     get_test_mode,
     register_active_channel,
-    reset_all_scores,
-    save_game_result,
     set_test_mode,
     unregister_active_channel,
-    update_player_stats,
-    upsert_player,
 )
-from db.navi_bridge import award_boli
+from bamboozled.db.repos.matches import ResultRow, ranked, record_match
+from bamboozled.db.repos.stats import bamboozled_board, player_stats, reset_bamboozled
+from bamboozled.services.names import display_name, safe_name
 from game_engine import commentary as cmnt
 from game_engine.cards import (
     CHANCE_CARD_FLAVOUR,
@@ -49,7 +45,6 @@ from game_engine.constants import (
     BAMBOOZLE_TIMEOUT_TERROR_COST,
     BONUS_ROUND_POINTS,
     CORRECT_ANSWER_POINTS,
-    DIFFICULTY_MULTIPLIER,
     DOUBLE_DOWN_BONUS,
     DOUBLE_DOWN_PENALTY,
     DRAW_CARD_TIMEOUT_SECONDS,
@@ -59,7 +54,6 @@ from game_engine.constants import (
     GOLDEN_MONKEY_TIMEOUT_SECONDS,
     LUCKY_LLAMA_BONUS,
     MIST_TURN_DURATION,
-    NAVI_DB_PATH,
     QUESTION_TIMEOUT_SECONDS,
     REVERSE_UNO_PENALTY,
     SOMBRERO_EXTRA_PENALTY,
@@ -504,14 +498,13 @@ class LobbyView(discord.ui.View):
             return
 
         game.players.append(interaction.user.id)
-        game.player_names[interaction.user.id] = interaction.user.display_name
+        game.player_names[interaction.user.id] = safe_name(interaction.user.display_name)
         game.scores[interaction.user.id] = STARTING_POINTS
         game.last_join_time = time.time()
-        await upsert_player(str(interaction.user.id), interaction.user.display_name)
 
         await interaction.response.edit_message(embed=self.lobby_embed(), view=self)
         await interaction.followup.send(
-            f"🎬 **{interaction.user.display_name}** joined the lobby! "
+            f"🎬 **{safe_name(interaction.user.display_name)}** joined the lobby! "
             f"({len(game.players)}/10 players)"
         )
 
@@ -531,7 +524,7 @@ class LobbyView(discord.ui.View):
             )
             return
 
-        pname = interaction.user.display_name
+        pname = safe_name(interaction.user.display_name)
         uid = interaction.user.id
         game.players.remove(uid)
         game.player_names.pop(uid, None)
@@ -591,6 +584,7 @@ class LobbyView(discord.ui.View):
             game.test_mode = await get_test_mode(str(interaction.guild.id))
 
         game.active = True
+        game.started_at = datetime.now(timezone.utc).isoformat()
         game.session_token = await fetch_session_token()
         await register_active_channel(str(game.channel_id))
 
@@ -606,7 +600,7 @@ class LobbyView(discord.ui.View):
             f"{i + 1}. {game.player_names[pid]}" for i, pid in enumerate(game.players)
         )
         test_note = (
-            "\n\n⚠️ **TEST MODE ACTIVE** — no Boli points or stats will be recorded."
+            "\n\n⚠️ **TEST MODE ACTIVE** — no stats will be recorded."
             if game.test_mode
             else ""
         )
@@ -667,55 +661,6 @@ class LobbyView(discord.ui.View):
 
 
 # ─────────────────────────────────────────────────────────────
-# Boli Points helpers
-# ─────────────────────────────────────────────────────────────
-
-def calculate_boli_award(
-    player_id: int,
-    game: "GameState",
-    correct_answers: dict,
-    winner_id: int,
-    sorted_players: list,
-) -> tuple:
-    """Returns (boli_amount, reason_string). Amount can be negative."""
-    dm = DIFFICULTY_MULTIPLIER.get(game.question_difficulty, 1.0)
-
-    participation = round(20 * dm)
-    correct_count = correct_answers.get(player_id, 0)
-    correct_reward = correct_count * 3
-
-    position = sorted_players.index(player_id) if player_id in sorted_players else len(sorted_players)
-    if player_id == winner_id:
-        placement_bonus = round(50 * dm)
-        placement_label = "winner"
-    elif position == 1 and len(game.players) >= 3:
-        placement_bonus = round(20 * dm)
-        placement_label = "2nd place"
-    elif position == 2 and len(game.players) >= 5:
-        placement_bonus = round(10 * dm)
-        placement_label = "3rd place"
-    else:
-        placement_bonus = 0
-        placement_label = f"{position + 1}th place"
-
-    final_score = game.scores.get(player_id, 0)
-    score_bonus = max(0, final_score) // 50
-
-    penalty = 0
-    if final_score < 0:
-        penalty = min(0, final_score // 100)
-        penalty = max(penalty, -20)
-
-    total = participation + correct_reward + placement_bonus + score_bonus + penalty
-    diff_str = game.question_difficulty.title() if game.question_difficulty else "Mixed"
-    reason = (
-        f"Bamboozled: {placement_label}, {correct_count} correct, "
-        f"{diff_str}, score {final_score}"
-    )
-    return total, reason
-
-
-# ─────────────────────────────────────────────────────────────
 # Cog
 # ─────────────────────────────────────────────────────────────
 
@@ -742,12 +687,11 @@ class BamboozledCog(commands.Cog):
                 )
                 return
 
-        game = GameState(channel_id=cid, host_id=interaction.user.id)
+        game = GameState(channel_id=cid, host_id=interaction.user.id, guild_id=interaction.guild_id or 0)
         game.players.append(interaction.user.id)
-        game.player_names[interaction.user.id] = interaction.user.display_name
+        game.player_names[interaction.user.id] = safe_name(interaction.user.display_name)
         game.scores[interaction.user.id] = STARTING_POINTS
 
-        await upsert_player(str(interaction.user.id), interaction.user.display_name)
 
         # Post the lobby embed with interactive buttons
         view = LobbyView(game, self)
@@ -782,7 +726,7 @@ class BamboozledCog(commands.Cog):
             )
             return
         # Delegate to the lobby button logic by directly mutating state
-        pname = interaction.user.display_name
+        pname = safe_name(interaction.user.display_name)
         uid = interaction.user.id
         game.players.remove(uid)
         game.player_names.pop(uid, None)
@@ -843,33 +787,35 @@ class BamboozledCog(commands.Cog):
 
     @bamboozled.command(name="leaderboard", description="All-time Bamboozled win leaderboard.")
     async def leaderboard(self, interaction: discord.Interaction):
-        rows = await get_leaderboard()
+        rows = (await bamboozled_board(None))[:10]
         if not rows:
             await interaction.response.send_message(
                 "No games on record yet!", ephemeral=True
             )
             return
+        await interaction.response.defer()
         embed = discord.Embed(title="🏆 BAMBOOZLED ALL-TIME LEADERBOARD", color=discord.Color.gold())
-        for i, (username, wins, played, pts) in enumerate(rows, 1):
+        for i, row in enumerate(rows, 1):
+            name = await display_name(self.bot, row["user_id"], interaction.guild)
             embed.add_field(
-                name=f"{i}. {username}",
-                value=f"🏆 {wins} wins · 🎮 {played} games · ⭐ {pts:,} pts earned",
+                name=f"{i}. {name}",
+                value=f"🏆 {row['wins']} wins · 🎮 {row['games']} games · ⭐ {row['total_score']:,} pts earned",
                 inline=False,
             )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ── /bamboozled stats ────────────────────────────────────
 
     @bamboozled.command(name="stats", description="View a player's all-time stats.")
     @app_commands.describe(user="The player to look up")
     async def stats(self, interaction: discord.Interaction, user: discord.Member):
-        row = await get_player_stats(str(user.id))
+        row = await player_stats(user.id)
         if not row:
             await interaction.response.send_message(
-                f"No stats found for {user.display_name}.", ephemeral=True
+                f"No stats found for {safe_name(user.display_name)}.", ephemeral=True
             )
             return
-        username, played, wins, pts = row
+        username, played, wins, pts = safe_name(user.display_name), row["games"], row["wins"], row["total_score"]
         win_rate = f"{wins / played * 100:.1f}%" if played > 0 else "N/A"
         embed = discord.Embed(title=f"📊 Stats — {username}", color=discord.Color.blue())
         embed.add_field(name="Games Played", value=str(played), inline=True)
@@ -887,7 +833,7 @@ class BamboozledCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def reset_scores(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        affected = await reset_all_scores()
+        affected = await reset_bamboozled()
         await interaction.followup.send(
             f"✅ All Bamboozled scores have been reset. {affected} player record(s) cleared.",
             ephemeral=True,
@@ -949,7 +895,7 @@ class BamboozledCog(commands.Cog):
 
     @bamboozled.command(
         name="testmode",
-        description="[Admin] Toggle test mode — no Boli points or stats recorded.",
+        description="[Admin] Toggle test mode — no stats recorded.",
     )
     @app_commands.describe(enabled="Enable or disable test mode for this server")
     @app_commands.checks.has_permissions(administrator=True)
@@ -961,7 +907,7 @@ class BamboozledCog(commands.Cog):
         if enabled:
             await interaction.response.send_message(
                 "⚠️ **Test mode ENABLED** for this server.\n"
-                "Future games will not record Boli points or player stats.\n"
+                "Future games will not record player stats.\n"
                 "Disable with `/bamboozled testmode enabled:False`.",
                 ephemeral=True,
             )
@@ -1002,9 +948,8 @@ class BamboozledCog(commands.Cog):
                 "• **Rounds:** 3, 5, 7, or 10\n"
                 "• **Difficulty:** Easy, Medium, Hard, or Mixed\n"
                 "• **Category:** All, or one of several curated topic areas\n\n"
-                "**Boli Points** are awarded at the end based on placement, correct answers, "
-                "difficulty, and your final in-game score. Hard difficulty pays more. A negative "
-                "final score costs a small Boli penalty — the chaos is your problem."
+                "**Stats** (wins, games, points) are kept per player. Use `/bamboozled stats` "
+                "and `/bamboozled leaderboard` to see them."
             ),
             color=discord.Color.orange(),
         )
@@ -2274,65 +2219,21 @@ class BamboozledCog(commands.Cog):
         await channel.send(cmnt.winner_announce(champion_name.upper(), champion_score))
 
         if game.test_mode:
-            await channel.send(
-                "⚠️ **TEST MODE** — results not recorded and no Boli points awarded."
-            )
+            await channel.send("⚠️ **TEST MODE** — results not recorded.")
         else:
-            # Save results
-            final_scores = {str(pid): game.scores.get(pid, 0) for pid in game.players}
-            await save_game_result(
-                channel_id=str(game.channel_id),
-                winner_id=str(champion_id),
-                player_count=len(game.players),
-                final_scores=final_scores,
+            scores = {pid: game.scores.get(pid, 0) for pid in game.players}
+            await record_match(
+                "bamboozled",
+                game.guild_id,
+                [
+                    ResultRow(pid, rank, scores[pid], game.correct_answer_count.get(pid, 0))
+                    for pid, rank in ranked(scores, champion_id)
+                ],
+                started_at=game.started_at,
+                rounds=game.total_rounds,
+                difficulty=game.question_difficulty,
+                category=",".join(map(str, game.question_categories)) or None,
             )
-            for pid in game.players:
-                await update_player_stats(str(pid), pid == champion_id, game.scores.get(pid, 0))
-
-            # Boli Points bridge
-            if NAVI_DB_PATH:
-                final_sorted = sorted(game.players, key=lambda p: game.scores.get(p, 0), reverse=True)
-                boli_results = []
-                for pid in final_sorted:
-                    amount, reason = calculate_boli_award(
-                        pid, game, game.correct_answer_count, champion_id, final_sorted
-                    )
-                    boli_results.append((pid, amount, reason))
-
-                boli_tasks = [
-                    award_boli(
-                        pid,
-                        game.player_names.get(pid, str(pid)),
-                        amount,
-                        reason,
-                        game_id=f"bamboozled_{game.channel_id}_{pid}_{int(time.time())}",
-                    )
-                    for pid, amount, reason in boli_results
-                    if amount > 0
-                ]
-                if boli_tasks:
-                    await asyncio.gather(*boli_tasks, return_exceptions=True)
-
-                medals = ["🥇", "🥈", "🥉"]
-                boli_embed = discord.Embed(
-                    title="🍮 Boli Points Awarded (powered by Navi)",
-                    color=discord.Color.gold(),
-                )
-                has_negative = any(amount < 0 for _, amount, _ in boli_results)
-                for i, (pid, amount, _) in enumerate(boli_results):
-                    pname = game.player_display_name(pid)
-                    medal = medals[i] if i < 3 else "  "
-                    amount_str = f"+{amount}" if amount >= 0 else str(amount)
-                    boli_embed.add_field(
-                        name=f"{medal} {pname}",
-                        value=f"{amount_str} Boli",
-                        inline=False,
-                    )
-                if has_negative:
-                    boli_embed.set_footer(
-                        text="Negative Boli reflects a negative final score — the chaos got you this time."
-                    )
-                await channel.send(embed=boli_embed)
 
         # ── Play-again: reset to lobby state, keeping the same players ──
         game.active = False

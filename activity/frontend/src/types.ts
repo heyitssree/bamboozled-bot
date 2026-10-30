@@ -69,7 +69,6 @@ export interface GameResult {
   username: string
   final_score: number
   rank: number
-  boli_awarded: number
 }
 
 // WebSocket message discriminated union — client → server
@@ -85,5 +84,5 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: 'STATE_UPDATE'; state: ServerGameState }
   | { type: 'SOUND_CUE'; sound: string }
-  | { type: 'GAME_OVER'; results: GameResult[]; boli_awards: Record<string, number>; state: ServerGameState }
+  | { type: 'GAME_OVER'; results: GameResult[]; state: ServerGameState }
   | { type: 'ERROR'; message: string }

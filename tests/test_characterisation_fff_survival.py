@@ -1,8 +1,7 @@
 """Characterisation of Fastest Fingers First (fastest_fingers.py) and Survival (survival.py).
 
-Discord views, the clock and the network are replaced; the scoring loops run as written. Boli, DB writes and
-embeds are deliberately not asserted (they are deleted in Phase 1); scores, ranks, streaks, kicks and the
-personal-best rule are the oracle for engine/fff.py and engine/survival.py.
+Discord views, the clock and the database are replaced; the scoring loops run as written. Scores, ranks, streaks,
+kicks and the personal-best rule are the oracle for engine/fff.py and engine/survival.py.
 """
 import asyncio
 import types
@@ -67,6 +66,11 @@ def play_fff(rounds, players=None, total_q=None):
             pass
 
     thread = FakeThread()
+    recorded = {}
+
+    async def recorder(mode, guild_id, results, **kw):
+        recorded.update(mode=mode, guild_id=guild_id, results=results, **kw)
+    session.recorded = recorded
     cog = F.FastestFingersCog(MagicMock())
     with ExitStack() as st:
         st.enter_context(patch.object(F, "AnswerView", FakeAnswerView))
@@ -75,8 +79,7 @@ def play_fff(rounds, players=None, total_q=None):
             TimeoutError=asyncio.TimeoutError, Event=asyncio.Event)))
         st.enter_context(patch.object(F, "time", types.SimpleNamespace(monotonic=lambda: 100.0)))
         st.enter_context(patch.object(F, "shuffle_answers", lambda q: (["right", "a", "b", "c"], 0)))
-        st.enter_context(patch.object(F, "award_boli", AsyncMock()))
-        st.enter_context(patch.object(F, "_save_result_to_navi_db", AsyncMock()))
+        st.enter_context(patch.object(F, "record_match", recorder))
         asyncio.run(cog._run_game(thread, session, total_q or len(rounds), "easy", None))
     return session, thread
 
@@ -125,6 +128,16 @@ class TestFastestFingers:
                           {}], total_q=2)
         assert not s.players and "No players remaining" in th.text
 
+    def test_results_are_recorded_with_rank_correct_count_and_average_time(self):
+        s, _ = play_fff([{1: (0, 100), 2: (0, 300), 3: (1, 50)}, {1: (0, 500), 2: (0, 200)}], total_q=2)
+        # P3 answered one wrong and skipped one: still in the game
+        rec = s.recorded
+        assert rec["mode"] == "fff" and rec["guild_id"] == 1 and rec["rounds"] == 2
+        got = {r.user_id: (r.rank, r.score, r.correct, r.details["avg_response_ms"], r.details["total_questions"])
+               for r in rec["results"]}
+        # P1: 100 + 75 = 175 (avg 300 ms) | P2: 75 + 100 = 175 (avg 250 ms) | P3: 0
+        assert got == {1: (1, 175, 2, 300, 2), 2: (2, 175, 2, 250, 2), 3: (3, 0, 0, None, 2)}
+
     def test_game_ends_after_the_last_question(self):
         _, th = play_fff([{1: (0, 100)}])
         assert "Final Results" in th.text
@@ -169,11 +182,14 @@ def play_survival(answers, difficulty="medium", cat_slug=None, prev_best=0, ques
         def stop(self):
             pass
 
-    async def fake_death(sess, reason, boli, personal_best, is_new_pb):
+    async def fake_death(sess, reason, personal_best, is_new_pb):
         death.update(reason=reason, streak=sess.streak, personal_best=personal_best, is_new_pb=is_new_pb)
         return MagicMock()
 
     thread = FakeThread()
+
+    async def saved_match(mode, guild_id, results, **kw):
+        death["saved"] = (mode, results[0].score, results[0].details["reason"], kw["difficulty"])
     cog = S.SurvivalCog(MagicMock())
     with ExitStack() as st:
         st.enter_context(patch.object(S, "SurvivalAnswerView", FakeView))
@@ -182,9 +198,9 @@ def play_survival(answers, difficulty="medium", cat_slug=None, prev_best=0, ques
             create_task=lambda c: (c.close(), MagicMock())[1])))
         st.enter_context(patch.object(S, "fetch_question_tapi", fake_fetch))
         st.enter_context(patch.object(S, "shuffle_answers", lambda q: (["right", "a", "b", "c"], 0)))
-        st.enter_context(patch.object(S, "_save_result_to_navi_db", AsyncMock(return_value=prev_best)))
+        st.enter_context(patch.object(S, "_previous_best", AsyncMock(return_value=prev_best)))
+        st.enter_context(patch.object(S, "record_match", saved_match))
         st.enter_context(patch.object(S, "_build_death_embed", fake_death))
-        st.enter_context(patch.object(S, "award_boli", AsyncMock()))
         player = MagicMock()
         player.id = 42
         asyncio.run(cog._run_survival(thread, session, player, difficulty, cat_slug, None))
@@ -212,6 +228,10 @@ class TestSurvival:
         assert play_survival([0, 0, 0, 1], prev_best=2)[0]["is_new_pb"] is True
         assert play_survival([0, 0, 1], prev_best=2)[0]["is_new_pb"] is False      # equal is not a new best
         assert play_survival([0, 1], prev_best=2)[0]["is_new_pb"] is False
+
+    def test_the_run_is_saved_with_streak_reason_and_difficulty(self):
+        death, *_ = play_survival([0, 0, "timeout"], difficulty="hard")
+        assert death["saved"] == ("survival", 2, "timeout", "hard")
 
     def test_previous_best_is_passed_through(self):
         assert play_survival([1], prev_best=9)[0]["personal_best"] == 9

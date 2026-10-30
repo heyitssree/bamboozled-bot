@@ -218,8 +218,7 @@ def legacy_env(script: Script, game: GameState | None = None):
         patch.object(G, "monkey_choice_segment", lambda: script.next("monkey_seg")),
         patch.object(G, "fetch_question_any", fake_fetch),
         patch.object(G, "shuffle_answers", lambda q: (["right", "a", "b", "c"], 0)),
-        patch.object(G, "save_game_result", AsyncMock()),
-        patch.object(G, "update_player_stats", AsyncMock()),
+        patch.object(G, "record_match", AsyncMock()),
         patch.object(G, "unregister_active_channel", AsyncMock()),
         patch.object(G, "LobbyView", MagicMock()),
     ] + [patch.object(G, name, cls) for name, cls in _views(script).items()]

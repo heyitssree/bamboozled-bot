@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 from typing import Literal
 
-logger = logging.getLogger("navi.session_registry")
+logger = logging.getLogger("bamboozled.session_registry")
 
 GameMode = Literal["bamboozled", "fff", "survival"]
 

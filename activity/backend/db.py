@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS game_results (
     username    TEXT NOT NULL,
     final_score INTEGER NOT NULL,
     rank        INTEGER NOT NULL,
-    boli_awarded INTEGER NOT NULL DEFAULT 0,
     recorded_at TEXT NOT NULL
 );
 
@@ -88,15 +87,15 @@ async def close_session(session_id: str) -> None:
 
 async def record_results(
     session_id: str,
-    results: list[dict],  # {discord_id, username, final_score, rank, boli_awarded}
+    results: list[dict],  # {discord_id, username, final_score, rank}
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(settings.DB_PATH) as db:
         await db.executemany(
             """
             INSERT INTO game_results
-                (session_id, discord_id, username, final_score, rank, boli_awarded, recorded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (session_id, discord_id, username, final_score, rank, recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -105,7 +104,6 @@ async def record_results(
                     r["username"],
                     r["final_score"],
                     r["rank"],
-                    r["boli_awarded"],
                     now,
                 )
                 for r in results

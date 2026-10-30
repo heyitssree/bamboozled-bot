@@ -70,7 +70,7 @@
         "type": 1
       },
       {
-        "description": "[Admin] Toggle test mode — no Boli points or stats recorded.",
+        "description": "[Admin] Toggle test mode — no stats recorded.",
         "name": "testmode",
         "options": [
           {

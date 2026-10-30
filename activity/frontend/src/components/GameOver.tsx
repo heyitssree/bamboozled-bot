@@ -68,7 +68,6 @@ function Confetti() {
 
 export function GameOver() {
   const gameResults = useGameStore((s) => s.gameResults)
-  const boliAwards = useGameStore((s) => s.boliAwards)
   const players = useGameStore((s) => s.players)
 
   const top3 = gameResults.slice(0, 3)
@@ -116,11 +115,6 @@ export function GameOver() {
                     className={`${PODIUM_HEIGHTS[pos]} w-20 bg-gray-700 rounded-t-xl flex flex-col items-center justify-start pt-2 gap-1`}
                   >
                     <span className="text-2xl">{PODIUM_MEDALS[pos]}</span>
-                    {boliAwards[result.discord_id] > 0 && (
-                      <span className="text-yellow-400 text-xs font-bold">
-                        +{boliAwards[result.discord_id]} Boli
-                      </span>
-                    )}
                   </div>
                 </div>
               )
@@ -148,19 +142,10 @@ export function GameOver() {
                 />
                 <span className="text-white text-sm flex-1">{result.username}</span>
                 <span className="text-yellow-300 text-sm font-bold">{result.final_score}pt</span>
-                {boliAwards[result.discord_id] > 0 && (
-                  <span className="text-green-400 text-xs">
-                    +{boliAwards[result.discord_id]} Boli
-                  </span>
-                )}
               </div>
             ))}
           </div>
         )}
-
-        <p className="text-gray-500 text-center text-sm">
-          Boli points have been awarded! Run <code className="text-gray-300">/mypoints</code> to see your total.
-        </p>
       </div>
     </div>
   )

@@ -53,7 +53,7 @@ export function useWebSocket(sessionId: string, playerId: string, username: stri
           audio.play(msg.sound).catch(() => undefined)
         } else if (msg.type === 'GAME_OVER') {
           applyStateUpdate(msg.state)
-          setGameOver(msg.results, msg.boli_awards, msg.state)
+          setGameOver(msg.results, msg.state)
         }
       }
 
