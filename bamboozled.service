@@ -10,6 +10,7 @@ User=YOUR_USER
 WorkingDirectory=/home/YOUR_USER/bamboozled-bot
 EnvironmentFile=/home/YOUR_USER/bamboozled-bot/.env
 ExecStart=/home/YOUR_USER/bamboozled-bot/.venv/bin/python bot.py
+Environment=LOG_TO_FILE=0
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/home/YOUR_USER/bamboozled-bot/logs/bot.log

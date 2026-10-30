@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import signal
 from pathlib import Path
 
 import discord
@@ -9,27 +10,49 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from activity_launcher import register_activity_command
-from db.database import get_orphaned_channels, init_db
-from db.navi_bridge import ensure_navi_tables
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
+from bamboozled.db.connection import db_path
+from bamboozled.db.migrate import migrate_async
+from bamboozled.db.repos.legacy_text import get_orphaned_channels
 
 load_dotenv()
+
+
+def _setup_logging() -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    # On by default for local runs; the container sets LOG_TO_FILE=0 and logs to stdout only.
+    if os.getenv("LOG_TO_FILE", "1").lower() not in ("0", "false", "no", ""):
+        log_dir = Path(__file__).parent / "logs"
+        log_dir.mkdir(exist_ok=True)
+        handlers.append(logging.FileHandler(log_dir / "bamboozled.log", encoding="utf-8"))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=handlers,
+    )
+
+
+_setup_logging()
+logger = logging.getLogger(__name__)
 _TOKEN = os.getenv("DISCORD_TOKEN")
+
+# Nothing the bot sends may ping @everyone or roles. Users are only pinged where a message names them on purpose.
+SAFE_MENTIONS = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=False)
 
 
 class BamboozledBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, allowed_mentions=SAFE_MENTIONS)
 
     async def setup_hook(self):
-        await init_db()
-        await ensure_navi_tables()
+        version = await migrate_async(db_path())
+        logger.info("Database ready (schema version %d).", version)
+        try:
+            asyncio.get_running_loop().add_signal_handler(
+                signal.SIGTERM, lambda: asyncio.create_task(self.close())
+            )
+        except (NotImplementedError, RuntimeError):
+            pass  # not supported on this platform; Ctrl+C still closes cleanly
         await self.load_extension("cogs.game")
         await self.load_extension("fastest_fingers")
         await self.load_extension("survival")
