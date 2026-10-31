@@ -467,3 +467,43 @@ was not run on the VM: **re-run on the idle stack in Phase 8** (spec) with the C
   `activity.require_proxy_signature` stays **off** (its default).
 - Real Discord response shapes for the two auth calls (the fake Discord follows the documented shape).
 - Origin-verify and security-group restrictions end to end: Phase 8.
+
+---
+
+## Phase 8 - AWS on the shared VM (branch `v2/phase-8-aws`) - BUILT OFFLINE, NOT DEPLOYED
+
+Nothing was deployed and no AWS resource was created or changed: there are no AWS credentials in this session (the
+AWS MCP server also failed to connect), and the VM's tag, alert e-mail and budget (owner input #6) are not known.
+
+### Built
+- `infra/`: its own CDK app (`aws-cdk-lib` 2.275.0 pinned): Data, Edge, Host, Monitoring stacks as in the spec, plus
+  `install.sh` / `run.sh` / `bamboozled.service`. `scripts/`: `find-host.sh`, `put-secrets.sh`, `deploy.sh`, `enable.sh`, `disable.sh`.
+- App side: `bamboozled/ssm_config.py` (SSM parameters into the environment; existing variables win; infra keys skipped),
+  `services/heartbeat.py` (every 5 minutes, prod only), `Dockerfile`, `.dockerignore`, `docker/{entrypoint.sh,litestream.yml}`, CI job `infra`.
+
+### Gate evidence
+| Check | Result |
+|---|---|
+| Python suite | **1222 passed, 2 deselected**; ruff clean |
+| `infra` tests (stacks, isolation, install script) | **18 passed** |
+| `cdk synth --strict` from this repository alone | succeeds; warnings only about the dummy VPC and subnet ids I used |
+| Isolation tests | every IAM statement scoped to this app (wildcards only for the five allowed actions); one security group with one inbound rule (tcp 8480 from the CloudFront prefix list); the Elastic IP is associated to our interface only; only the expected resource types; no em dash in names |
+| `install.sh` dry run against stub commands | first run installs; second run attaches, pulls, restarts and reloads nothing; a missing `docker` fails with exit 1 and writes nothing; no prune |
+| Image | builds from a clean checkout (86 s); runs as uid 10002; boots in prod mode and serves the web app and `/api/health`; Litestream 0.3.13 present; 57 MB resident at idle |
+
+### Deviations
+1. **Litestream 0.3.13**, not the 0.5.x the spec suggests: I confirmed its download URL and config syntax (`retention: 72h`); 0.5 changes both. Upgrade deliberately later.
+2. **Secrets in SSM SecureString, as the spec says**, not Secrets Manager. Your global `CLAUDE.md` asks that secret tasks use Secrets Manager with `asm-exec`; I could not load that skill here and the app design reads SSM. `put-secrets.sh` only writes, never reads back. Say if you want Secrets Manager instead.
+3. `install.sh` also sets a policy route for the second interface (replies leave by the interface they arrived on). Not in the spec, needed for the Elastic IP to work.
+4. The container publishes the port on all interfaces; the security groups decide who can reach it. Binding to the second interface's address would be stricter (not done).
+
+### Not done: the gates that need the real VM and credentials (spec 13.6)
+Idle deploy; memory (25% headroom), disk (3 GiB free) and CPU-credit measurements; the other bot unchanged; `ip route get`
+still on the primary interface; port 8480 closed on the primary address; CloudFront WebSocket upgrade with a real client;
+`cdk destroy` leaves the host as it was; `abuse_check` against the deployed stack; the Phase 7 load run on the VM.
+`put-secrets.sh` and `deploy.sh` are syntax-checked only, never run.
+
+### Needed from you
+AWS credentials for a test deploy (or run `scripts/deploy.sh` yourself); the VM's tag key and value; the alert e-mail; the
+monthly budget; whether the host is arm64 (t4g) or amd64; the Discord application id. Also decide the ingress choice (second
+address, about 345 rupees a month, or the tunnel alternative in the spec, section 13.8).

@@ -1,0 +1,14 @@
+[Unit]
+Description=Bamboozled (Discord Activity game server)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=5
+ExecStart=/opt/bamboozled/run.sh
+ExecStop=/usr/bin/docker stop -t 60 bamboozled
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

@@ -12,6 +12,7 @@ import uvicorn
 
 from .config import Config
 from .context import Context
+from .services import heartbeat
 from .server.auth import DevAuthenticator, DiscordAuthenticator
 from .server.http import WS_MAX_MESSAGE, Deps, create_app
 from .server.names import NameCache
@@ -21,6 +22,7 @@ from .services.names import forget as forget_display_name
 from .services.results_card import post_result_card
 from .services.trivia_source import OfflineQuestions, ScreenedQuestions
 from .settings import Settings
+from .ssm_config import load_ssm_into_environ
 
 log = logging.getLogger("bamboozled.app")
 
@@ -89,6 +91,8 @@ async def run(cfg: Optional[Config] = None) -> None:
     tasks = [asyncio.create_task(server.serve())]
     if cfg.dev_auth:
         tasks.append(asyncio.create_task(_dev_banner()))
+    if cfg.env == "prod" and heartbeat.enabled():
+        tasks.append(asyncio.create_task(heartbeat.run_heartbeat(cfg.env)))
     if bot is not None:
         tasks.append(asyncio.create_task(bot.start(cfg.bot_token)))
     log.info("Bamboozled listening on %s:%d (env=%s)", cfg.host, cfg.port, cfg.env)
@@ -108,5 +112,6 @@ async def run(cfg: Optional[Config] = None) -> None:
 def main() -> None:
     from dotenv import load_dotenv
     load_dotenv()
+    load_ssm_into_environ()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     asyncio.run(run())

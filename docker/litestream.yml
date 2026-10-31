@@ -1,0 +1,11 @@
+# Replicates both databases to this application's own bucket; 72 hours of history is kept (privacy: backups age out).
+region: ${AWS_REGION}
+dbs:
+  - path: /app/data/bamboozled.db
+    replicas:
+      - url: s3://${BAMBOOZLED_BUCKET}/litestream/bamboozled.db
+        retention: 72h
+  - path: /app/data/privacy.db
+    replicas:
+      - url: s3://${BAMBOOZLED_BUCKET}/litestream/privacy.db
+        retention: 72h
