@@ -19,7 +19,8 @@ export function Settings() {
     setBusy(false)
     setConfirm(false)
     if (result === 'done') toast('Done. Your results were deleted and you are opted out. Use /privacy opt_in to come back.', 'info')
-    else if (result === 'unavailable') toast('Privacy controls are not switched on yet. Use /privacy in Discord for now.')
+    else if (result === 'in_game') toast('You are in a game that is still running. Finish it or leave it, then try again.')
+    else if (result === 'unavailable') toast('Privacy controls are not available right now. Use /privacy in Discord instead.')
     else toast('That did not work. Please try again in a moment.')
   }
 

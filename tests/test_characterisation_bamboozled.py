@@ -737,7 +737,7 @@ class TestEndgame:
         game.test_mode = False
         saved = {}
         with legacy_env(script, game) as (cog, ch):
-            import cogs.game as G
+            from tests.legacy_harness import G           # the module the harness patched (not a fresh import)
 
             async def capture(mode, guild_id, results, **kw):
                 saved.update(mode=mode, guild_id=guild_id, winner_id=next(r.user_id for r in results if r.rank == 1),
@@ -758,7 +758,7 @@ class TestEndgame:
         g = make_game(2, scores={1: 100, 2: 200})
         script = Script()
         with legacy_env(script, g) as (cog, ch):
-            import cogs.game as G
+            from tests.legacy_harness import G           # the module the harness patched (not a fresh import)
             run(cog._run_endgame(ch, g))
             assert not G.record_match.called
 

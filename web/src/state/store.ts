@@ -80,8 +80,11 @@ export const useStore = create<AppState>((set, get) => ({
       lastQuestion: q ?? (room.phase === 'playing' ? s.lastQuestion : null),
     }))
   },
-  pushEvent: (event) =>
-    set((s) => ({ events: [...s.events, { id: nextId++, kind: event.kind, payload: event.payload }].slice(-MAX_EVENTS) })),
+  pushEvent: (event) => {
+    set((s) => ({ events: [...s.events, { id: nextId++, kind: event.kind, payload: event.payload }].slice(-MAX_EVENTS) }))
+    // a message from the people running the bot ("restarting in 5 minutes"): show it to everyone in the room
+    if (event.kind === 'admin_message' && typeof event.payload.text === 'string') get().toast(event.payload.text, 'info')
+  },
   bye: (reason) => {
     if (reason === 'server_restart') set({ interrupted: true })
     else if (reason === 'room_closed') set({ roomClosed: true })

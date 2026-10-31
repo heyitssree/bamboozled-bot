@@ -10,3 +10,5 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setenv("BAMBOOZLED_DB_PATH", str(path))
     migrate(path)
     return path
+
+from tests.bot_helpers import bot, ctx  # noqa: E402,F401  (fixtures for the bot tests)

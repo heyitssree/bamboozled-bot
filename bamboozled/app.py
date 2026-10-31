@@ -11,13 +11,14 @@ import httpx
 import uvicorn
 
 from .config import Config
-from .db.connection import db_path
-from .db.migrate import migrate_async
+from .context import Context
 from .server.auth import DevAuthenticator, DiscordAuthenticator
 from .server.http import WS_MAX_MESSAGE, Deps, create_app
 from .server.names import NameCache
 from .server.results import db_recorder
 from .server.rooms import RoomManager
+from .services.names import forget as forget_display_name
+from .services.results_card import post_result_card
 from .services.trivia_source import OfflineQuestions
 from .settings import Settings
 
@@ -34,11 +35,15 @@ async def _dev_banner() -> None:
         await asyncio.sleep(60)
 
 
-def build(cfg: Config, settings: Optional[Settings] = None, bot=None):
-    """Assemble the pieces. Returns (app, manager, deps, http_client)."""
-    settings = settings or Settings(cfg.setting_overrides())
+def build(cfg: Config, ctx: Optional[Context] = None, bot=None):
+    """Assemble the pieces around one shared Context. Returns (app, manager, deps, http_client)."""
+    ctx = ctx or Context.create(cfg, Settings(cfg.setting_overrides()))
     http = httpx.AsyncClient(timeout=10.0)
-    authenticator = DevAuthenticator() if cfg.dev_auth else DiscordAuthenticator(cfg.app_id, cfg.bot_token, http)
+    optout = ctx.privacy.is_opted_out
+    if cfg.dev_auth:
+        authenticator = DevAuthenticator(is_opted_out=optout)
+    else:
+        authenticator = DiscordAuthenticator(cfg.app_id, cfg.bot_token, http, is_opted_out=optout)
 
     async def fetch_name(user_id: int) -> str:
         if bot is None:
@@ -46,21 +51,31 @@ def build(cfg: Config, settings: Optional[Settings] = None, bot=None):
         user = bot.get_user(user_id) or await bot.fetch_user(user_id)
         return user.display_name
 
-    manager = RoomManager(settings, monotonic_ms, OfflineQuestions(), recorder=db_recorder)
-    deps = Deps(cfg=cfg, manager=manager, authenticator=authenticator, settings=settings, clock_ms=monotonic_ms,
-                http=http, names=NameCache(fetch_name))
+    async def card(room, rows):
+        await post_result_card(ctx, room, rows)
+
+    manager = RoomManager(
+        ctx.settings, monotonic_ms, OfflineQuestions(), recorder=db_recorder, on_game_over=card, is_opted_out=optout
+    )
+    names = NameCache(fetch_name)
+    ctx.manager, ctx.authenticator, ctx.names = manager, authenticator, names
+    ctx.privacy.in_running_game = manager.in_running_game
+    ctx.privacy.evict = manager.evict_user
+    ctx.privacy.forget_name = lambda uid: (forget_display_name(uid), names.forget(uid))
+    deps = Deps(cfg=cfg, manager=manager, authenticator=authenticator, settings=ctx.settings, clock_ms=monotonic_ms,
+                http=http, names=names, privacy=ctx.privacy)
     return create_app(deps), manager, deps, http
 
 
 async def run(cfg: Optional[Config] = None) -> None:
     cfg = cfg or Config.from_env()
-    version = await migrate_async(db_path())
-    log.info("Database ready (schema version %d).", version)
+    ctx = Context.create(cfg)
+    await ctx.init()
     bot = None
     if cfg.bot_token and not cfg.dev_auth:
-        from bot import BamboozledBot
-        bot = BamboozledBot()
-    app, manager, deps, http = build(cfg, bot=bot)
+        from .bot.client import BamboozledBot
+        bot = BamboozledBot(ctx)
+    app, manager, deps, http = build(cfg, ctx, bot)
     server = uvicorn.Server(uvicorn.Config(app, host=cfg.host, port=cfg.port, ws_max_size=WS_MAX_MESSAGE,
                                            log_level="warning", server_header=False, date_header=False))
     stop = asyncio.Event()

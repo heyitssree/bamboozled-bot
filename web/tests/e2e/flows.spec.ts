@@ -124,17 +124,37 @@ test('settings are applied at once and remembered', async ({ page, context }) =>
   await context.clearCookies()
 })
 
-test('opting out asks for confirmation and says so honestly when the server cannot do it yet', async ({ page }) => {
-  await page.goto(`/?user=alice&instance=${uniqueInstance('optout')}`)
+test('opting out asks for confirmation, deletes you and shuts the door', async ({ page }) => {
+  const me = `leaver${Date.now() % 100000}`                                   // opting out is permanent for the account: use a fresh one
+  await page.goto(`/?user=${me}&instance=${uniqueInstance('optout')}`)
   await page.getByRole('button', { name: 'Settings' }).click()
   await page.getByRole('button', { name: /Opt out and delete/ }).click()
   const confirm = page.getByRole('dialog', { name: 'Opt out of Bamboozled?' })
   await expect(confirm).toBeVisible()
-  await confirm.getByRole('button', { name: 'Keep playing' }).click()
+  await confirm.getByRole('button', { name: 'Keep playing' }).click()           // cancelling changes nothing
   await expect(confirm).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Pick a game' })).toBeVisible()
   await page.getByRole('button', { name: /Opt out and delete/ }).click()
   await page.getByRole('button', { name: 'Yes, delete and opt out' }).click()
-  await expect(page.getByText('Privacy controls are not switched on yet', { exact: false })).toBeVisible()
+  // the server closes the connection; coming back is refused with a clear explanation
+  await expect(page.getByRole('heading', { name: 'You have opted out' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('/privacy opt_in')).toBeVisible()
+})
+
+test('opting out is refused while you are in a running game', async ({ browser }) => {
+  const [alice, bob] = await join(browser, uniqueInstance('optgame'), NAMES.slice(0, 2))
+  try {
+    await startGame(alice.page)
+    await expect(bob.page.getByRole('region', { name: 'Question' })).toBeVisible()
+    await bob.page.getByRole('button', { name: 'Settings' }).click()
+    await bob.page.getByRole('button', { name: /Opt out and delete/ }).click()
+    await bob.page.getByRole('button', { name: 'Yes, delete and opt out' }).click()
+    await expect(bob.page.getByText('still running', { exact: false })).toBeVisible()
+    await bob.page.keyboard.press('Escape')
+    await expect(bob.page.getByRole('region', { name: 'Question' })).toBeVisible()      // still seated in the game
+  } finally {
+    await closeAll([alice, bob])
+  }
 })
 
 test('the stats dialog loads and shows an empty state for a new player', async ({ page }) => {

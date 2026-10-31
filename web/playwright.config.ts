@@ -19,6 +19,8 @@ export default defineConfig({
     url: `http://127.0.0.1:${PORT}/api/health`,
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,
+    stdout: 'pipe',                                   // the server's log lines show up in the test output
+    stderr: 'pipe',
     env: { PORT: String(PORT) },
   },
   projects: [

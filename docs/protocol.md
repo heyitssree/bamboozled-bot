@@ -55,7 +55,7 @@ Unknown message types are ignored. A malformed frame gets `ERROR {code}` (`bad_j
 | Type | Payload |
 |---|---|
 | `STATE` | the full view for *you* (below); sent on every change and on (re)connect |
-| `EVENT` | `{kind, payload}`: an animation cue (`wheel_result`, `card_drawn`, `steal`, `mist_on`, ...). Never needed to rebuild state |
+| `EVENT` | `{kind, payload}`: an animation cue (`wheel_result`, `card_drawn`, `steal`, `mist_on`, ...). Never needed to rebuild state. `admin_message {text}` is a note from the people running the bot. While the Mist is up, events carry no numbers |
 | `ERROR` | `{code, message}`: `not_host`, `bad_phase`, `not_your_turn`, `spectator`, `bad_index`, `bad_target`, `bad_rule`, `bad_choice`, `too_late`, `already_answered`, `not_enough_players`, `mode_disabled`, `bad_config`, ... |
 | `ACK` | `{id, duplicate: true}` |
 | `PONG` | `{server_now_ms}` |
@@ -89,4 +89,5 @@ replaces the first. Idle lobbies close after 15 minutes, idle games after 30.
 ## REST (all under `/api`)
 `GET /health` -> `{status}` (no auth). `POST /oauth/token {code}` -> `{access_token}` (rate-limited per IP and per code).
 `GET /me/stats?mode=` and `GET /leaderboard?mode=&scope=server|global` need `Authorization: Bearer <token>` and
-`X-Instance-Id`. No CORS: the app is same-origin through Discord's proxy mapping.
+`X-Instance-Id`. `POST /privacy/opt_out` deletes your results and closes your sockets (409 `in_game` while you are in a
+running game); `POST /privacy/opt_in` works for an opted-out user too (429 `cooldown` with `retry_at` until the wait is over). No CORS: the app is same-origin through Discord's proxy mapping.
