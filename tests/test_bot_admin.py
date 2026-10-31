@@ -233,7 +233,18 @@ class TestOtherCommands:
         values = {f.name: f.value for f in emb.fields}
         assert values["Rooms / sockets now"] == "1 / 1"
         assert "ok" in values["Discord instance lookup"] and values["Discord token check"] == "no calls yet"
-        assert {"Uptime", "Active games", "Database size", "Last backup / replication", "Safety rejections today"} <= set(values)
+        wanted = {"Uptime", "Active games", "Database size", "Last backup / replication", "Safety rejections (since start)"}
+        assert wanted <= set(values)
+
+    async def test_status_shows_trivia_health_and_rejections(self, bot, tmp_db):
+        from bamboozled.services.trivia_source import OfflineQuestions, ScreenedQuestions
+        tv = bot.ctx.trivia = ScreenedQuestions(bot.ctx.settings, OfflineQuestions(), http=object())
+        tv.health["opentdb"] = (1_700_000_000, "ok")
+        tv.rejections.add("opentdb", "History")
+        tv.served["offline"] = 2
+        values = {f.name: f.value for f in status_embed(bot.ctx).fields}
+        assert "opentdb: ok" in values["Trivia sources"] and "offline 2" in values["Trivia sources"]
+        assert values["Safety rejections (since start)"] == "opentdb 1"
 
     async def test_status_works_without_a_game_server_in_the_process(self, bot, tmp_db):
         bot.ctx.manager = None

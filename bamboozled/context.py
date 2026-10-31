@@ -29,6 +29,7 @@ class Context:
     authenticator: Any = None  # for the Discord health lines in the admin status
     names: Optional[NameCache] = None
     bot: Any = None
+    trivia: Any = None  # services.trivia_source.ScreenedQuestions, for the admin status
     ready: bool = False
     on_setting_changed: list[Callable[[str, Any], Any]] = field(default_factory=list)
 

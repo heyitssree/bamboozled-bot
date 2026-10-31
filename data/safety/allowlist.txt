@@ -1,0 +1,2 @@
+# OWNER LIST: single words that must never be treated as blocked (e.g. a place name that contains a blocked word).
+# One entry per line; '#' starts a comment. Matched as whole words after normalisation (see services/safety.py).

@@ -19,7 +19,7 @@ from .server.results import db_recorder
 from .server.rooms import RoomManager
 from .services.names import forget as forget_display_name
 from .services.results_card import post_result_card
-from .services.trivia_source import OfflineQuestions
+from .services.trivia_source import OfflineQuestions, ScreenedQuestions
 from .settings import Settings
 
 log = logging.getLogger("bamboozled.app")
@@ -54,8 +54,9 @@ def build(cfg: Config, ctx: Optional[Context] = None, bot=None):
     async def card(room, rows):
         await post_result_card(ctx, room, rows)
 
+    ctx.trivia = ScreenedQuestions(ctx.settings, OfflineQuestions(), http)
     manager = RoomManager(
-        ctx.settings, monotonic_ms, OfflineQuestions(), recorder=db_recorder, on_game_over=card, is_opted_out=optout
+        ctx.settings, monotonic_ms, ctx.trivia, recorder=db_recorder, on_game_over=card, is_opted_out=optout
     )
     names = NameCache(fetch_name)
     ctx.manager, ctx.authenticator, ctx.names = manager, authenticator, names

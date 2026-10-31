@@ -375,3 +375,44 @@ Custom questions (`/teach`, spec 10.5) are not built, as decided in the owner de
 ### Needed from you at this gate
 Run the commands in a test server with two accounts (needs the test application): `/play`, `/stats`, `/leaderboard`,
 `/privacy opt_out` then `opt_in`, `/bamboozled-admin panel`, play a game and check the result card and its Play again button.
+
+---
+
+## Phase 6 - Trivia screening (branch `v2/phase-6-trivia`)
+
+### What was built
+- `bamboozled/services/safety.py`: whole-word screening (NFKC fold, zero-width strip, leet map, stretched letters, tokens
+  that keep Malayalam vowel signs). Tiers: `always`, `contextual` (only when `trivia.safety_strictness` is `strict`), and
+  the owner's `blocklist.txt`. Spaced-out evasion: long entries match squashed text; short ones match a run of 1-2
+  letter tokens ("f u c k", "fu-ck") that joins up to the entry exactly. `allowlist.txt` exempts single words.
+- `data/safety/`: `always.txt` and `contextual.txt` are the v1 word list split into tiers, copied by script from the
+  baseline commit (nothing added, none typed by hand). `blocklist.txt` and `allowlist.txt` are empty with a format header.
+- `services/trivia_source.py`: `ScreenedQuestions` is now the provider for every mode. Sources per `trivia.sources`
+  (OpenTDB, The Trivia API, both, or `custom_only`); question, category and every answer are screened; a rejection
+  fetches another (max 5); a failing source is left alone for 30 s; the whole live attempt has an 8 s budget; anything
+  else falls back to `custom_questions.json`. The same question is not asked twice in a row of 500.
+- `/bamboozled-admin status`: per-source health, questions served per source, rejections since start (per source and
+  category are counted; the panel shows per source).
+
+### Gate evidence
+| Check | Result |
+|---|---|
+| Whole suite | **1214 passed, 2 deselected**; ruff clean |
+| 34 harmless sentences (F5 words, History/Mythology, Kerala places, Malayalam) | all pass in standard and strict |
+| Every `always` term (59), 7 forms each (plain, spaced, dotted, leet, in a sentence, stretched, full-width) | all rejected |
+| Contextual terms | pass in standard, rejected in strict |
+| Owner list | placeholder Malayalam and Latin entries match; allowlist works; a harmless Malayalam sentence passes |
+| Mutation: whole-word match changed to substring | 14 tests fail |
+| Fallbacks | source error, slow source (budget), custom-only, repeats, all-rejected: each ends on the offline file |
+| Live check | 40 real draws from both APIs: 39 accepted, 0 rejected, 1 network error |
+
+### Deviations
+1. `data/safety/always.txt` and `contextual.txt` are extra files (spec names only blocklist and allowlist) so no word lists live in code.
+2. "Last 500 questions" dedupe is in memory only. `trivia.custom_share` (optional section) not built.
+3. No OpenTDB session token (the spec does not require one); duplicates are avoided by the in-memory list.
+4. The old US-sports regex filter is not carried over (Sports is excluded from the OpenTDB categories).
+5. Rejections are counted since start, not "today".
+
+### Needed from you
+- **Blocklist contents (input #4):** Manglish spellings and Malayalam script into `data/safety/blocklist.txt`.
+- A review of accepted and rejected samples once the blocklist is in. Nothing here shows a rejected question's text.
