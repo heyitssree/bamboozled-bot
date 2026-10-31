@@ -7,5 +7,5 @@ cd ..
 DB="$(mktemp -d)/e2e.db"
 exec env BAMBOOZLED_DEV_AUTH=1 BAMBOOZLED_ENV=test BAMBOOZLED_PORT="${PORT:-8481}" BAMBOOZLED_WEB_DIST=web/dist-mock \
   BAMBOOZLED_DB_PATH="$DB" LOG_TO_FILE=0 \
-  BAMBOOZLED_SETTINGS_JSON='{"activity.reconnect_grace_seconds": 5, "activity.max_rooms": 100, "game.reveal_pause_seconds": 1}' \
+  BAMBOOZLED_SETTINGS_JSON='{"activity.reconnect_grace_seconds": 5, "activity.max_rooms": 100, "game.reveal_pause_seconds": 1, "trivia.sources": "custom_only"}' \
   "${PYTHON:-.venv/bin/python}" -m bamboozled

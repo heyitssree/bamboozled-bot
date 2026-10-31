@@ -54,12 +54,16 @@ def status_embed(ctx) -> discord.Embed:
 
     embed.add_field(name="Discord instance lookup", value=line("instance"), inline=False)
     embed.add_field(name="Discord token check", value=line("token"), inline=False)
-    embed.add_field(
-        name="Trivia sources",
-        value=f"offline questions only (sources setting: {ctx.settings.get('trivia.sources')})",
-        inline=False,
-    )
-    embed.add_field(name="Safety rejections today", value="not active yet", inline=True)
+    tv = ctx.trivia
+    if tv is None:
+        trivia = f"offline questions only (sources setting: {ctx.settings.get('trivia.sources')})"
+        rejected = "0"
+    else:
+        trivia = "\n".join(f"{n}: {tv.health[n][1]} (<t:{int(tv.health[n][0])}:R>)" for n in tv.health) or "no calls yet"
+        trivia += "\nserved: " + (", ".join(f"{k} {v}" for k, v in sorted(tv.served.items())) or "none yet")
+        rejected = ", ".join(f"{k} {v}" for k, v in sorted(tv.rejections.by_source().items())) or "0"
+    embed.add_field(name="Trivia sources", value=trivia, inline=False)
+    embed.add_field(name="Safety rejections (since start)", value=rejected, inline=True)
     try:
         size = os.path.getsize(db_path())
         embed.add_field(name="Database size", value=f"{size / 1024:,.0f} KB", inline=True)

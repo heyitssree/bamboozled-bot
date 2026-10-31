@@ -1,0 +1,11 @@
+# Rejected only when trivia.safety_strictness is strict (History and Mythology use these legitimately).
+# One entry per line; '#' starts a comment. Matched as whole words after normalisation (see services/safety.py).
+die
+heil
+lynch
+murder
+nazi
+rape
+raped
+raping
+suicide

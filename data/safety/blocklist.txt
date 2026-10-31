@@ -1,0 +1,3 @@
+# OWNER LIST: Manglish spellings and Malayalam script. Add one entry per line. Rejected in every category.
+# One entry per line; '#' starts a comment. Matched as whole words after normalisation (see services/safety.py).
+# Multi-word entries are allowed (words separated by spaces).
