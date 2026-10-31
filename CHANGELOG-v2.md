@@ -416,3 +416,54 @@ Run the commands in a test server with two accounts (needs the test application)
 ### Needed from you
 - **Blocklist contents (input #4):** Manglish spellings and Malayalam script into `data/safety/blocklist.txt`.
 - A review of accepted and rejected samples once the blocklist is in. Nothing here shows a rejected question's text.
+
+---
+
+## Phase 7 - Security and load gate (branch `v2/phase-7-security`)
+
+Owner decision at the Phase 6 gate: proceed without the blocklist contents (input #4 stays open).
+
+### Abuse check (`tools/abuse_check.py`)
+Starts the real application on a loopback port with a throwaway database and answers Discord's API itself. There is no
+option to aim it at another host.
+
+| Run | Result |
+|---|---|
+| Real build (production auth, fake Discord) | **13/13 BLOCKED** |
+| `--weakened` (dev auth on, origin check off) | **VULNERABLE on 4 checks** (fake token, not in instance, unknown instance, origin header), exit 1: the tool can fail |
+
+`tests/test_security_gate.py` runs both and fails the build if the real run is not 13/13 or the weakened run cannot fail.
+
+### Checklist evidence
+| Item | Evidence |
+|---|---|
+| Identity | abuse checks 1-4, 12; dev-auth start-up guards in `tests/test_config.py` (prod, SSM, loopback) |
+| Authorisation | abuse checks 6-7; engine rejects wrong phase and wrong turn (`test_engine_behaviour.py`) |
+| Information hiding | abuse check 11 (all three modes); Hypothesis test in `test_server_fuzz.py` that hidden data never reaches a viewer who must not see it |
+| Abuse resistance | checks 8-10 (frame size, rate limit with close 4429, room cap, one seat); caps and reaper in `test_server_rooms.py` |
+| Secrets and logs | `test_tokens_never_reach_logs_or_error_messages` (user token and bot token absent from logs and error text); the token travels in the AUTH frame, never the URL. **Reading secrets from SSM is Phase 8** |
+| Dependencies | `pip-audit -r requirements.txt`: no known vulnerabilities. `npm audit`: 3 findings, all below |
+| Privacy | opted-out refused at AUTH (check 12); purge tests in `test_bot_privacy.py`; `test_no_name_or_avatar_is_stored_anywhere` scans every text value in the database after a game |
+| Restart | `test_a_restart_tells_players...`: BYE and close 1012 reach players in under 2 s; the new process gives a working lobby; the web app shows "Game interrupted" (unit tests) |
+
+**npm audit findings (not fixable by us).** `uuid` (moderate) and `zod` (high) come in only through
+`@discord/embedded-app-sdk`, and npm reports no fixed version. Both advisories need attacker-chosen input
+(an oversized collection for zod, a caller-supplied buffer for uuid); in the Activity the SDK only parses messages
+from Discord's own client frame. I did not read the SDK source to confirm that, so treat it as a judgement to accept
+or reject. Re-check when the SDK releases.
+
+### Load (`tools/load_test.py`, 20 rooms x 6 players, mixed modes, 600 s, on this Mac)
+| Measure | Target | Result |
+|---|---|---|
+| Peak RSS | < 300 MB | **51 MB** |
+| Idle RSS | < 150 MB | **46 MB** |
+| Intent-to-broadcast median / p95 | < 50 / < 150 ms | **0.4 / 1.2 ms** (max 18 ms) |
+| CPU average | < 0.5 vCPU | **0.04 vCPU** |
+15,762 intents and 1,015 finished games. This measures the room manager and engine, not sockets or the network, and it
+was not run on the VM: **re-run on the idle stack in Phase 8** (spec) with the CPU credit balance recorded.
+
+### Not verified here (needs the test Discord application, owner input #1)
+- Whether Discord's proxy forwards signed headers on REST calls and on the WebSocket upgrade. Until confirmed,
+  `activity.require_proxy_signature` stays **off** (its default).
+- Real Discord response shapes for the two auth calls (the fake Discord follows the documented shape).
+- Origin-verify and security-group restrictions end to end: Phase 8.
