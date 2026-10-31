@@ -31,20 +31,6 @@ class TestMigrations:
         M.migrate(path)
         assert M.migrate(path) == 2
 
-    def test_old_v1_database_is_stamped_and_upgraded_without_losing_rows(self, tmp_path):
-        path = tmp_path / "old.db"
-        con = sqlite3.connect(path)
-        con.executescript(
-            "CREATE TABLE players (discord_id TEXT PRIMARY KEY, username TEXT, games_played INTEGER DEFAULT 0,"
-            " games_won INTEGER DEFAULT 0, total_points_earned INTEGER DEFAULT 0);"
-            "INSERT INTO players VALUES ('1', 'Old', 3, 1, 900);")
-        con.commit()
-        con.close()
-        assert M.migrate(path) == 2
-        con = sqlite3.connect(path)
-        assert con.execute("SELECT username FROM players").fetchone() == ("Old",)
-        con.close()
-
     def test_refuses_a_database_newer_than_the_code(self, tmp_path):
         path = tmp_path / "new.db"
         M.migrate(path)

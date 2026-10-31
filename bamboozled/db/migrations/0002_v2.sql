@@ -1,6 +1,5 @@
 -- Names and avatars are NEVER stored: they are resolved from Discord at display time. Only ids and results persist.
--- (schema_version is created by the runner.) Nothing from v1 is dropped here: active_channels and server_settings
--- still serve the legacy text mode until Phase 5 replaces them with `settings`.
+-- (schema_version is created by the runner.)
 CREATE TABLE matches (
   match_id     TEXT PRIMARY KEY,
   mode         TEXT NOT NULL CHECK (mode IN ('bamboozled', 'fff', 'survival')),

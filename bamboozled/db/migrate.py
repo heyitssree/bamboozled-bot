@@ -1,7 +1,6 @@
 """Numbered SQL migrations: migrations/NNNN_name.sql, applied in order, each in one transaction.
 
 The runner owns the schema_version table. It refuses to touch a database that is newer than the code.
-A database created before migrations existed (it has the v1 `players` table) is stamped as version 1.
 """
 import asyncio
 import re
@@ -42,10 +41,6 @@ def migrate(path: Path | str) -> int:
     try:
         con.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
         version = current_version(con)
-        if version == 0 and con.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='players'").fetchone():
-            _stamp(con, 1)           # pre-migration v1 database: the baseline is already in place
-            version = 1
         if version > latest:
             raise MigrationError(f"database is at version {version} but this code only knows up to {latest}")
         for number, file in migrations:

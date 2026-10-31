@@ -87,23 +87,17 @@ Status: **built, awaiting owner sign-off.** Branch `v2/phase-1-standalone` (stac
 - **Hygiene.** Activity backend: lifespan instead of `on_event`, API docs off unless `BAMBOOZLED_DEBUG=1`, CORS no
   longer `*`. Dependencies pinned with upper bounds. `LOG_TO_FILE` (on locally, off under systemd). SIGTERM closes the
   bot cleanly.
-- **`tools/import_own_data.py`** converts the bot's and the Activity's own old tables into the new schema on a copy
-  (refuses in-place and existing outputs, ids and numbers only, deterministic match ids), prints counts before and
-  after and compares the Bamboozled top 10.
 
-### Deviations from the spec text (please confirm)
-1. `0002_v2.sql` does **not** drop `players`, `game_results`, `active_channels`, `server_settings` (the spec's comment
-   said "dropped from v1"). Dropping would destroy data before the import is verified, and the text mode still uses
-   `active_channels` and `server_settings`. A later migration should drop the first two after you confirm the import.
-   `schema_version` is created by the runner instead of by 0002. `custom_questions` skipped (spec: optional).
-2. `tests/test_standalone.py`: the `../` pattern is skipped for `.ts`/`.tsx` files (it flags normal relative imports
-   such as `'../store/gameStore'`), and `.venv`/caches/logs are excluded.
-3. The bot's database default moved from `db/bamboozled.db` to `data/bamboozled.db` (env `BAMBOOZLED_DB_PATH`
-   overrides). **An existing install must copy its file or set that variable**; an old file is upgraded in place by the
-   migration runner (stamped v1, new tables added, nothing dropped).
-4. `/bamboozled leaderboard` now has a true per-server scope in `/quizstats` (the old table had no server id). Old
-   text-mode games imported from `game_results` have no server id (guild 0) and count on global boards only.
-5. Ruff `line-length` set to 130 and rules to E/F/W so the existing files are not mass-reformatted.
+### Deviations from the spec text
+1. **Fresh project (owner decision, 31 Oct 2026): no data migration.** `tools/import_own_data.py`, its tests and the v1
+   player/result tables are gone. `0001_baseline` now holds only the two legacy-text-mode tables (`active_channels`,
+   `server_settings`); `0002_v2` holds the v2 tables. `schema_version` is created by the runner. `custom_questions`
+   skipped (spec: optional). This removes owner input #2 (old databases).
+2. `tests/test_standalone.py`: the `../` pattern is skipped for `.ts`/`.tsx` files (it flags normal relative imports),
+   and `.venv`, caches, logs and `graphify-out` are excluded.
+3. The bot's database default is `data/bamboozled.db` (env `BAMBOOZLED_DB_PATH` overrides).
+4. `/quizstats` has a true per-server scope. Ruff `line-length` is 130 and rules are E/F/W so existing files are not
+   mass-reformatted.
 
 ### Gate evidence
 | Check | Result |
@@ -121,5 +115,4 @@ Status: **built, awaiting owner sign-off.** Branch `v2/phase-1-standalone` (stac
 - **A live game in each text mode** and the **"@everyone typed anywhere no longer pings" check in a real server**: need
   the separate test Discord application and server (owner input #1). The offline tests above cover the same code paths
   and the real `AllowedMentions` payloads, but they are not a live run.
-- **Import check against real data**: needs copies of the bot's and Activity's own databases (owner input #2).
 - The six **CONFIRM** items from Phase 0 are still open; they block Phase 2, not this phase.
