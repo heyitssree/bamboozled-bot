@@ -44,9 +44,13 @@ def test_bamboozled_random_play_terminates_and_keeps_its_invariants(seed, n, rou
             if ev.kind == "turn_start":
                 seen_turns.append((ev.payload["player"], ev.payload["round"]))
     s = play(e, s, random.Random(seed ^ 0xBEEF), question, on_step=check)
-    assert e.is_over(s) and s.champion in s.players
+    assert e.is_over(s)
     rows = e.results(s)
-    assert [r.rank for r in rows] == list(range(1, len(rows) + 1)) and rows[0].user_id == s.champion
+    assert [r.rank for r in rows] == list(range(1, len(rows) + 1))
+    if s.players:
+        assert s.champion in s.players and rows[0].user_id == s.champion
+    else:                                                       # everyone was removed (a lone player who went AFK)
+        assert s.champion is None and rows == []
     # turn order is a rotation: within one round, players come up in seat order without repeats
     by_round = {}
     for pid, rnd in seen_turns:

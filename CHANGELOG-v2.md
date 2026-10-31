@@ -174,3 +174,64 @@ Play against scripted bots from `data/custom_questions.json`; `--auto` watches b
 
 ### Needed from you at this gate
 Play each mode through `tools/play_cli.py` and approve the rules document and section 5 (the spec's Phase 2 gate).
+
+## Phase 3 - Game server
+
+Status: **built, awaiting owner sign-off.** Branch `v2/phase-3-server` (from `main`, which now holds the approved
+Phases 0 to 2). Protocol: `docs/protocol.md`.
+
+### Added
+- `python -m bamboozled`: ONE process (migrate, settings, HTTP/WebSocket server with its own room ticker, bot when a
+  token is configured). SIGTERM sends `BYE{server_restart}`, then exits.
+- `bamboozled/server/`: `auth.py` (Discord `users/@me` plus the activity-instance lookup with the bot token; retries 3 x
+  500 ms; 30 s instance and 5 min token caches; Discord rate-limit headers honoured; no token ever stored or logged),
+  `rooms.py` (lobby, host, ready, spectators, seats, grace period, caps, reaper, restart), `protocol.py` (strict
+  models, 4 KB frames, unknown types ignored), `http.py` (REST, WebSocket, static app with cache headers, origin-verify
+  header, request-size limit, security headers, no CORS, no X-Frame-Options), `ratelimit.py`, `names.py` (24 h cache,
+  never stored), `proxy_sig.py` (Ed25519 via PyNaCl, off by default), `results.py` (one transaction per game).
+- Dev auth stub (`BAMBOOZLED_DEV_AUTH=1`, token `dev:<id>:<name>`): refuses to start in prod or with SSM config, forces
+  127.0.0.1, warns every minute; each guard has a test.
+- `tools/load_test.py`, `bamboozled/config.py`, `bamboozled/settings.py` (the Phase 5 registry's keys and defaults),
+  `bamboozled/services/trivia_source.py` (offline source only; live sources and screening are Phase 6).
+
+### Gate evidence
+| Check | Result |
+|---|---|
+| Whole suite | **929 passed, 2 deselected**; ruff clean |
+| Auth, against a fake Discord (`httpx.MockTransport`) | valid user; bad token; user not in the instance (4403 after 3 retries); unknown instance (4404); an instance that lists the user only after a retry; cache expiry; 429 handling; opted-out user; no server channel |
+| Rooms, under a fake clock (no sleeps) | lobby rules and host-only actions; caps; one live socket per user; reconnect within the grace period keeps the seat; after it the engine removes the player and a returner is a spectator; host handover; idle and lobby TTLs; kill switch; restart BYE; idempotent message ids; rate limit (10/s) and flood close; slow-reader close |
+| Whole games through the real engine | all three modes, several seeds, results recorded exactly once with the guild from Discord's lookup, rematch |
+| Two scripted clients over a real WebSocket (dev auth) | a full game of each mode; clients decide only from the views they receive |
+| Real process | started `python -m bamboozled`, connected with a real client: health, lobby, a live question with no correct index on the wire, oversize frame, forged token (4401), SIGTERM exits cleanly |
+| Fuzz (hypothesis) | random frames never crash the manager; no view leaks the correct index or Mist-hidden scores; random lobby actions keep the room consistent. Mutation checks: removing error handling and removing the Mist number filter were each caught |
+| Load check, 20 rooms x 6 players, mixed modes, **600 s** | 34,982 intents, 2,417 games finished. Latency median **0.36 ms**, p95 **0.96 ms**, max 20 ms. RSS idle 46 MB, peak **51 MB**. CPU **0.06 vCPU** average. All targets met (spec: 300 MB, 50/150 ms, 0.5 vCPU, idle 150 MB) |
+| Restart during a game | every client receives `BYE{server_restart}` (close 1012) at once, well inside 10 s; a reconnect lands in a fresh, working lobby. The client-side "game interrupted" screen is Phase 4 |
+
+### Bugs found by the integration tests (fixed)
+- The first `STATE` was queued before the socket's writer task existed and was never sent; the writer is now woken on
+  start-up. (Unit tests on the manager alone could not have caught this.)
+- A leaving player's follow-up decisions (Phase 2 fix) and an origin-verify rejection that never answered the
+  WebSocket handshake.
+- Housekeeping: `.coverage` had been committed in Phase 2; untracked and ignored.
+
+### Deviations to note
+1. **Tickers and tasks.** The spec describes one asyncio task per room. Rooms are synchronous state machines advanced
+   by one server ticker (`pump`, every 0.25 s), which makes them fully testable with a fake clock and serialises all
+   intents trivially.
+2. **Disconnected players.** After the grace period the player is removed through the engine's `LEAVE` (their seat is
+   dropped; on return they are a spectator) instead of being "timed out" turn by turn, so a dead connection can never
+   hold a room up.
+3. Hit-by-hit load numbers measure the server's own work in-process (no network), as the in-process method keeps the run
+   repeatable; the same tool is to be run again on the VM in Phase 8.
+4. `auth.authenticate` raises `AuthError` with a close code instead of returning `None`, so clients get a specific
+   reason (4401 / 4403 / 4404).
+5. Privacy endpoints (`/api/privacy/*`) and the live opted-out set are Phase 5; the AUTH hook that refuses opted-out
+   users is in place and tested.
+
+### Not verified (needs Discord or the test application)
+- Discord's real response shapes for the activity-instance lookup and whether the signed proxy headers reach REST
+  calls or the WebSocket upgrade: both are marked in the code and are Phase 7 checks (spec 8.1, 12.2).
+- A run against the real Discord API (needs owner input #1, the separate test application).
+
+### Needed from you at this gate
+Approve the protocol (`docs/protocol.md`) and the two deviations in 1 and 2 above.

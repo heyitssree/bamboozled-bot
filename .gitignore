@@ -32,3 +32,5 @@ data/dev/
 .ruff_cache/
 .DS_Store
 graphify-out/
+.coverage
+htmlcov/

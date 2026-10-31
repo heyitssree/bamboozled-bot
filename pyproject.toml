@@ -12,3 +12,4 @@ markers = [
     "network: calls a live external service (OpenTDB); deselected by default, run with -m network",
 ]
 asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "auto"

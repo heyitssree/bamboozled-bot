@@ -77,6 +77,24 @@ tail -f logs/bot.log
 
 To update: `git pull && sudo systemctl restart bamboozled`.
 
+## Game server (the Activity's backend)
+
+The new server runs in the same process as the bot and replaces the old `activity/backend` once the new web app
+exists (Phase 4). Protocol: [docs/protocol.md](docs/protocol.md).
+
+```bash
+pip install -r requirements.txt
+# try it without Discord: fake sign-in, loopback only, refuses to start in production
+BAMBOOZLED_DEV_AUTH=1 BAMBOOZLED_ENV=dev python -m bamboozled      # http://127.0.0.1:8480/api/health
+```
+With `BAMBOOZLED_DEV_AUTH=1` a client signs in with the token `dev:<user_id>:<name>` and any instance id. It is refused
+when `BAMBOOZLED_ENV=prod` or when SSM configuration is active, it only listens on 127.0.0.1, and it logs a warning
+every minute. Without it the server verifies every player against Discord (needs `DISCORD_APPLICATION_ID`,
+`DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`). Other settings: `BAMBOOZLED_PORT` (8480), `BAMBOOZLED_WEB_DIST` (built web
+app, default `web_dist/`), `ORIGIN_VERIFY` (shared header value CloudFront sends).
+
+Load check: `python tools/load_test.py` (20 rooms x 6 players for 10 minutes; `--seconds 60` for a quick run).
+
 ## Discord Activity (optional)
 
 The Activity is the same game in an embedded Discord window. `/bamboozled-activity` makes the bot ask the backend for a session and posts a launch button.
