@@ -304,3 +304,74 @@ server decided and sends intents.
 ### Needed from you at this gate
 Play each mode on desktop and a phone (needs the test application), and approve the look: the 48 screenshots are in
 `web/tests/visual/screens.spec.ts-snapshots/` (start with `lobby-host`, `bz-my-question`, `bz-mist`, `fff-reveal`).
+
+## Phase 5 - Bot surface, settings, privacy
+
+Status: **built, awaiting owner sign-off.** Branch `v2/phase-5-bot` (from `main`, which holds the approved Phases 0 to 4).
+Custom questions (`/teach`, spec 10.5) are not built, as decided in the owner decisions log.
+
+### Built
+- **Commands** (spec 10.1): the App Launcher **Launch** entry point keeps Discord's default handler; `/play` launches the
+  Activity (`launch_activity`, with a plain "open the App Launcher" fallback if Discord refuses); `/stats [user] [mode]`;
+  `/leaderboard [mode] [scope]` (`/quizstats` is a thin alias of it for one release); `/privacy status|opt_out|opt_in`;
+  `/help` with a screenshot; `/bamboozled-admin ...`. The legacy `/bamboozled`, `/fff`, `/survival` load only while
+  `feature.text_mode` is on and are added or removed at run time when it is switched, with a re-sync. The old
+  `/bamboozled-activity` launcher (it called the retired Activity backend) is deleted.
+- **Settings registry** (`bamboozled/settings/registry.py`, spec 10.2): one declaration per setting (kind, bounds, choices,
+  default, legacy keys). Panel, `set`, import and export all read it; the game server reads values at use time so a change
+  applies to the next room at once; values live in the `settings` table with who changed them; an unknown key or invalid
+  stored value stops start-up. One setting added: `game.reveal_pause_seconds` (see "Found").
+- **Admin** (`/bamboozled-admin`, owner or `system.panel_role`, hidden from non-administrators by default): `panel` (pick a
+  category, see each setting with a marker where it differs from the default, then toggle, edit in a modal, reset or go
+  back), `set`/`get`/`reset` with autocomplete and validation, `status` (uptime, rooms and sockets, games by mode, last
+  Discord instance-lookup and token-check results, database size), `rooms` (list live rooms; close one; message its
+  players, shown as a toast in the Activity), `export`/`import` (all-or-nothing), `testing on|off` (replaces the old
+  test-mode command: games in a testing server are not recorded and post no card).
+- **Privacy** (`/privacy`, `/api/privacy/*`, spec 10.3): opting out explains what is deleted, needs a Confirm within 60
+  seconds, refuses during a running game (setting), writes `privacy.db` first, then the in-memory set, then one transaction
+  deleting the user's `match_results` and `stats` and any match left empty, then forgets their cached name. Opting in waits
+  `privacy.optin_cooldown_days` and restores nothing. Enforced at: WebSocket AUTH, the room manager (second lock), the
+  command tree (every slash command except `/privacy` and `/help`), the old text lobbies' join buttons, leaderboards,
+  `/stats` for others, result cards, recorded results, and live rooms (an opt-out closes their sockets and the engine
+  removes them).
+- **Result card** (spec 10.4): one embed (podium, scores) in the channel Discord reported for the instance, `AllowedMentions.none()`,
+  a persistent **Play again** button (works after a restart), restricted by `channel.results` when set, skipped quietly
+  (logged once per channel) without permission, never shows opted-out players.
+- **One shared Context** (`bamboozled/context.py`) joins the bot and the server in the process: settings, privacy, rooms.
+
+### Gate evidence
+| Check | Result |
+|---|---|
+| Python suite | **1104 passed**, ruff clean |
+| Settings registry | 23 settings, each validated (bool, bounded int, closed choice, id list, role); every entry **editable from the panel and from `/bamboozled-admin set`, readable with `get`, resettable, and recording who changed it** (a parametrized test per setting); import is all-or-nothing |
+| Commands (10.1) | `/play`, `/stats`, `/leaderboard`, `/help`, the opted-out guard on every command, the legacy switch, and a full `setup_hook` start-up all tested against the real cogs with fake Discord interactions |
+| Admin (10.2) | permission gate (owner, role, everyone else), panel states, rooms view, export and import, testing mode, a changed setting taking effect in the running server, the kill switch closing rooms |
+| Privacy (10.3) | the 60-second confirmation and cancel, order of operations checked with a spy, what is purged and what is not, cooldown, refused in a running game, each enforcement point has its own test, REST endpoints |
+| Result card (10.4) | card content, no mentions, channel restriction, missing permission logged once, opted-out excluded, persistent button |
+| Command snapshot | updated and reviewed: new `/play /stats /leaderboard /privacy /help /bamboozled-admin`; `/bamboozled-activity` removed |
+| Web | 148 unit tests, end to end **20 of 20** (adds the real opt-out flow and the refusal during a game), strict types and lint clean |
+
+### Found and fixed while building
+- **The answer reveal lasted one server tick.** After a Fastest Fingers round (and after a Survival answer, or a Bamboozled turn that
+  ends) the next question replaced the result within 0.25 s, so players barely saw who won. The old game paused 3 s. The
+  server now holds each result for `game.reveal_pause_seconds` (default 3, settable 0 to 10) without taking time from the
+  next question. This also explained intermittent end-to-end failures that waited for the result screen.
+- Loading and unloading the old cog in the new tests removed it from `sys.modules`, so old characterisation tests
+  re-imported an unpatched copy; they now use the module their harness patched.
+- A nested f-string that is only valid on Python 3.12 (the project targets 3.11) was caught and rewritten.
+- The registry's bounds rejected two test-only values (grace 3 s, 200 rooms): the tests now use legal ones.
+
+### Deviations and honest limits
+1. **Not run live:** no real Discord application is available here (owner input #1), so the spec's "manual run with two accounts"
+   was not done. Everything above uses the real cogs, views, services and database with fake interactions. Unverified against
+   real Discord: `launch_activity` behaviour from slash commands and buttons, slash-command sync, the persistent button after
+   a real restart, modals and the select-menu panel as rendered.
+2. The legacy text games stay in their old files (not moved to `legacy_text/`); they are deleted one release after cutover.
+3. `/bamboozled-admin status` shows "not active yet" for safety rejections (Phase 6) and "not configured" for backups
+   (Phase 8). Trivia health shows the offline source.
+4. The old per-guild `/bamboozled testmode` still uses its own table; the new `testing on|off` uses the settings registry.
+5. `/privacy` is the only way back for an opted-out user: they cannot open the Activity (AUTH is refused, with that message).
+
+### Needed from you at this gate
+Run the commands in a test server with two accounts (needs the test application): `/play`, `/stats`, `/leaderboard`,
+`/privacy opt_out` then `opt_in`, `/bamboozled-admin panel`, play a game and check the result card and its Play again button.

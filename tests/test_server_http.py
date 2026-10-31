@@ -271,7 +271,7 @@ def test_the_manager_dropping_a_connection_closes_the_socket(web):
 def test_unknown_api_routes_are_404_for_every_method(web):
     client, _ = make_client(web)
     for method in ("get", "post", "put", "patch", "delete"):
-        r = getattr(client, method)("/api/privacy/opt_out")
+        r = getattr(client, method)("/api/privacy/no_such_thing")
         assert r.status_code == 404 and r.json() == {"error": "not_found"}, method
     assert client.get("/api/health").status_code == 200                      # real routes still win
 

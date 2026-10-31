@@ -1,6 +1,6 @@
 """Dump the slash-command tree (names, descriptions, options, choices, permissions) as JSON.
 
-Loads the cogs against an offline Bot object; nothing connects to Discord.
+Loads every extension against an offline bot; nothing connects to Discord.
 Usage: python tools/snapshot_commands.py [out.json]   (default: print to stdout)
 """
 import asyncio
@@ -10,10 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import discord
-from discord.ext import commands
-
-EXTENSIONS = ["cogs.game", "fastest_fingers", "survival", "quiz_stats"]
+from bamboozled.bot.client import LEGACY_EXTENSIONS, NEW_EXTENSIONS, BamboozledBot  # noqa: E402
 
 
 def _normalise(obj):
@@ -25,12 +22,9 @@ def _normalise(obj):
 
 
 async def build_tree() -> list[dict]:
-    from activity_launcher import register_activity_command
-
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
-    for ext in EXTENSIONS:
+    bot = BamboozledBot()
+    for ext in NEW_EXTENSIONS + LEGACY_EXTENSIONS:
         await bot.load_extension(ext)
-    register_activity_command(bot.tree)
     cmds = [c.to_dict(bot.tree) for c in bot.tree.get_commands(guild=None)]
     cmds.sort(key=lambda c: c["name"])
     await bot.close()
@@ -38,8 +32,7 @@ async def build_tree() -> list[dict]:
 
 
 def main(argv: list[str]) -> int:
-    tree = asyncio.run(build_tree())
-    text = json.dumps(tree, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    text = json.dumps(asyncio.run(build_tree()), indent=2, ensure_ascii=False, sort_keys=True) + "\n"
     if argv:
         Path(argv[0]).write_text(text)
     else:

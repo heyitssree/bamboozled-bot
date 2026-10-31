@@ -35,6 +35,7 @@ GAME_KINDS = {"ANSWER": ANSWER, "DRAW_CARD": DRAW_CARD, "SPIN": SPIN, "PICK_TARG
               "MONKEY": MONKEY, "FORFEIT": FORFEIT}
 # Engine events that are bookkeeping for the server, not cues for clients. turn_resolved carries every score.
 INTERNAL_EVENTS = {"turn_resolved"}
+REVEAL_EVENTS = {"reveal", "streak_up"}          # an answer was resolved: show it before asking the next question
 NUMBERS_HIDDEN_BY_MIST = ("delta", "amount", "scores")
 MAX_OUTBOX = 400
 FLOOD_STRIKES = 60
@@ -120,6 +121,8 @@ class Room:
     results: Optional[list] = None
     started_ms: int = 0
     fetching: bool = False
+    # key (None, or a survival user id) -> do not ask the next question before this time (the last result is on show)
+    hold: dict = field(default_factory=dict)
 
     def players(self) -> list[Member]:
         return [m for m in self.members.values() if not m.spectator]
@@ -138,8 +141,10 @@ GameOverHook = Callable[[Room, list], Awaitable[Any]]
 class RoomManager:
     def __init__(self, settings: Settings, clock_ms: Callable[[], int], provider: QuestionProvider,
                  recorder: Optional[Recorder] = None, on_game_over: Optional[GameOverHook] = None,
-                 rng_factory: Callable[[], random.Random] = lambda: random.Random(random.SystemRandom().getrandbits(64))):
+                 rng_factory: Callable[[], random.Random] = lambda: random.Random(random.SystemRandom().getrandbits(64)),
+                 is_opted_out: Callable[[int], bool] = lambda _uid: False):
         self.settings, self.clock_ms, self.provider = settings, clock_ms, provider
+        self.is_opted_out = is_opted_out
         self.recorder, self.on_game_over, self.rng_factory = recorder, on_game_over, rng_factory
         self.rooms: dict[str, Room] = {}
         self.shutting_down = False
@@ -151,6 +156,8 @@ class RoomManager:
         """Seat an authenticated user. Raises Refused when the server cannot take them."""
         if self.shutting_down or self.settings.get("system.killswitch"):
             raise Refused("maintenance", "Bamboozled is closed for maintenance. Try again shortly.", 1012)
+        if self.is_opted_out(auth.user_id):                           # authentication already checks; this is the second lock
+            raise Refused("opted_out", "You have opted out of Bamboozled. Use /privacy opt_in to play again.", 4403)
         room = self.rooms.get(auth.room_key)
         if room is None:
             if len(self.rooms) >= self.settings.get("activity.max_rooms"):
@@ -314,7 +321,7 @@ class RoomManager:
                 m.spectator = True                                   # not here at the start: watching this time
         engine, cfg = get_engine(room.mode), self._game_config(room)
         refs = [PlayerRef(m.user_id) for m in roster]
-        room.results, room.game, room.runs = None, None, {}
+        room.results, room.game, room.runs, room.hold = None, None, {}, {}
         if room.mode == "survival":
             for ref in refs:
                 room.runs[ref.user_id] = engine.new_game(cfg, [ref], self.rng_factory(), now)
@@ -368,10 +375,14 @@ class RoomManager:
         self._store(room, key, state, result, now)
 
     def _store(self, room: Room, key: Optional[int], before: Any, result, now: int) -> None:
+        engine = get_engine(room.mode)
         if room.mode == "survival":
             room.runs[key] = result.state
         else:
             room.game = result.state
+        if any(ev.kind in REVEAL_EVENTS for ev in result.events) and engine.needs_question(result.state):
+            # an answer was just revealed and the next question is due: let people read the result first
+            room.hold[key] = now + self.settings.get("game.reveal_pause_seconds") * 1000
         mist = bool(getattr(before, "mist_active", False) or getattr(result.state, "mist_active", False))
         self._send_events(room, result.events, mist)
         self._finish_if_over(room, now)
@@ -472,8 +483,8 @@ class RoomManager:
         engine = get_engine(room.mode)
         for key, state in room.states():
             need = engine.needs_question(state)
-            if not need:
-                continue
+            if not need or now < room.hold.get(key, 0):
+                continue                                               # nothing wanted yet, or the last result is still on show
             ask = {**need, "mode": room.mode, "difficulty": room.cfg["difficulty"] or need.get("difficulty"),
                    "category": room.cfg["category"] or need.get("category")}
             q = await self.provider(ask)
@@ -492,15 +503,27 @@ class RoomManager:
     async def _flush(self) -> None:
         pending, self._to_flush = self._to_flush, []
         for room, rows, info in pending:
+            if room.guild_id in self.settings.get("system.testing_guilds"):
+                continue                                              # a testing server: nothing recorded, no card
+            rows = self._without_opted_out(rows)
             if self.recorder is not None and rows:
                 guild = room.guild_id
                 if info["mode"] == "survival":
                     for uid, row in info["runs"].items():
-                        await self.recorder("survival", guild, [row], started_ms=info["started_ms"], cfg=info["cfg"])
+                        if not self.is_opted_out(uid):
+                            await self.recorder("survival", guild, [row], started_ms=info["started_ms"], cfg=info["cfg"])
                 else:
                     await self.recorder(info["mode"], guild, rows, started_ms=info["started_ms"], cfg=info["cfg"])
             if self.on_game_over is not None and self.settings.get("feature.post_results"):
                 await self.on_game_over(room, rows)
+
+    def _without_opted_out(self, rows: list) -> list:
+        """Someone who opted out while a game was running is left out of what is saved and posted; ranks stay in order."""
+        kept = [r for r in rows if not self.is_opted_out(r.user_id)]
+        if len(kept) == len(rows):
+            return rows
+        from ..engine.api import ResultRow
+        return [ResultRow(r.user_id, i + 1, r.score, r.correct, r.details) for i, r in enumerate(kept)]
 
     # ───────────────────────────── closing ─────────────────────────────
 
@@ -521,6 +544,44 @@ class RoomManager:
         """Stop taking rooms and tell everyone to reconnect (a restart ends running games)."""
         self.shutting_down = True
         self._close_all("server_restart", 1012)
+
+    # ───────────────────────────── for the admin panel and privacy ─────────────────────────────
+
+    def in_running_game(self, user_id: int) -> bool:
+        return any(r.phase == "playing" and not r.members[user_id].spectator for r in self.rooms.values() if user_id in r.members)
+
+    def evict_user(self, user_id: int) -> None:
+        """Take a user out of every room (they opted out): the engine removes them, their sockets close."""
+        now = self.clock_ms()
+        for room in list(self.rooms.values()):
+            member = room.members.get(user_id)
+            if member is None:
+                continue
+            if room.phase == "playing" and not member.spectator:
+                try:
+                    self._apply(room, user_id, Intent(LEAVE), now)
+                except (IllegalIntent, Refusal):
+                    pass
+            if member.conn is not None:
+                member.conn.send("ERROR", {"code": "opted_out", "message": "You have opted out of Bamboozled."})
+                member.conn.close(4403, "opted out")
+            room.members.pop(user_id, None)
+            if room.members:
+                self._after_departure(room, user_id, now)
+                self._broadcast_state(room, now)
+
+    def rooms_summary(self, now: int) -> list[dict]:
+        return [{"key": r.key, "mode": r.mode, "phase": r.phase, "players": len(r.players()),
+                 "watching": len(r.members) - len(r.players()),
+                 "age_s": max(0, (now - r.created_ms) // 1000), "guild_id": r.guild_id, "channel_id": r.channel_id}
+                for r in self.rooms.values()]
+
+    def admin_message(self, key: str, text: str) -> bool:
+        room = self.rooms.get(key)
+        if room is None:
+            return False
+        self._broadcast(room, "EVENT", {"kind": "admin_message", "payload": {"text": text[:300]}})
+        return True
 
     # ───────────────────────────── views ─────────────────────────────
 

@@ -22,6 +22,7 @@ from ..config import Config
 from ..db.repos import stats as stats_repo
 from ..settings import Settings
 from .auth import DISCORD_API, AuthError, DiscordUnavailable
+from ..services.privacy import PrivacyService
 from .names import NameCache
 from .protocol import FrameError, parse_frame
 from .proxy_sig import verify as verify_proxy_signature
@@ -44,6 +45,7 @@ class Deps:
     clock_ms: Callable[[], int]
     http: Optional[httpx.AsyncClient] = None
     names: Optional[NameCache] = None
+    privacy: Optional[PrivacyService] = None
     pending_auth: int = 0
     tick_s: float = 0.25                     # how often rooms are advanced; 0 = the caller drives the clock
     ip_limiter: KeyedLimiter = field(default=None)       # type: ignore[assignment]
@@ -161,7 +163,7 @@ def create_app(deps: Deps) -> FastAPI:
             return JSONResponse({"error": "bad_code"}, status_code=400)
         return {"access_token": resp.json()["access_token"]}          # nothing else from Discord's answer is passed on
 
-    async def authed(request: Request):
+    async def authed(request: Request, allow_opted_out: bool = False):
         token = request.headers.get("authorization", "")
         instance = request.headers.get("x-instance-id", "")
         if not token.startswith("Bearer ") or not instance:
@@ -171,7 +173,7 @@ def create_app(deps: Deps) -> FastAPI:
                                           request.headers.get("x-signature-timestamp", ""),
                                           request.headers.get("x-discord-proxy-payload", "").encode()):
                 raise AuthError("bad_signature", "Request was not signed by Discord.", 4403)
-        return await deps.authenticator(token[7:], instance)
+        return await deps.authenticator(token[7:], instance, allow_opted_out=allow_opted_out)
 
     @app.exception_handler(AuthError)
     async def auth_error(_request, err: AuthError):
@@ -235,6 +237,27 @@ def create_app(deps: Deps) -> FastAPI:
             deps.manager.disconnect(conn, deps.clock_ms())
             wake.set()
             await asyncio.gather(writer, return_exceptions=True)
+
+    @app.post("/api/privacy/opt_out")
+    async def privacy_opt_out(request: Request):
+        auth = await authed(request)
+        if deps.privacy is None:
+            return JSONResponse({"error": "not_configured"}, status_code=503)
+        result = await deps.privacy.opt_out(auth.user_id)
+        if result.outcome == "in_game":
+            return JSONResponse({"error": "in_game", "message": "Finish or leave your running game first."}, status_code=409)
+        return {"status": "out", "purged": result.purged}
+
+    @app.post("/api/privacy/opt_in")
+    async def privacy_opt_in(request: Request):
+        auth = await authed(request, allow_opted_out=True)          # an opted-out user can still prove who they are
+        if deps.privacy is None:
+            return JSONResponse({"error": "not_configured"}, status_code=503)
+        result = await deps.privacy.opt_in(auth.user_id)
+        if result.outcome == "cooldown":
+            return JSONResponse({"error": "cooldown", "retry_at": result.retry_at,
+                                 "message": "You can opt back in a little later."}, status_code=429)
+        return {"status": "in"}
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
     async def no_such_api(rest: str):

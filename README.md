@@ -95,6 +95,32 @@ app, default `web_dist/`), `ORIGIN_VERIFY` (shared header value CloudFront sends
 
 Load check: `python tools/load_test.py` (20 rooms x 6 players for 10 minutes; `--seconds 60` for a quick run).
 
+## Commands
+
+| Command | What it does |
+|---|---|
+| App Launcher **Launch**, or `/play` | Launches the Activity from this channel. Also the **Play again** button on a result card |
+| `/stats [user] [mode]` | Stats (private reply). Names are looked up from Discord when shown, never stored |
+| `/leaderboard [mode] [scope]` | Top players in this server or everywhere (`/quizstats` is the old name, kept for one release) |
+| `/privacy status`, `opt_out`, `opt_in` | See, or leave. Opting out asks you to confirm within 60 seconds, deletes your results and stats, and refuses while you are in a running game. Opting back in waits a few days and restores nothing |
+| `/help` | What it is and how to start |
+| `/bamboozled-admin ...` | `panel` (settings by category), `set`, `get`, `reset`, `status`, `rooms`, `export`, `import`, `testing on|off`. Bot owner, or members of the role in `system.panel_role` |
+| `/bamboozled`, `/fff`, `/survival` | The old text games, registered only while `feature.text_mode` is on. Retired after cutover |
+
+When a game ends the bot posts one result card (podium and scores, no mentions, never anyone who opted out) with a
+**Play again** button. It skips quietly, logging once, if it cannot post in that channel.
+
+## Settings and privacy
+
+Every setting is declared once in `bamboozled/settings/registry.py` (label, bounds, choices, default). The admin panel,
+`/bamboozled-admin set`, import and export all read it, the game server reads values at use time (a change applies to the
+next room at once), and each change records who made it. Unknown keys stop start-up. `system.testing_guilds` marks
+servers whose games are not recorded and post no card.
+
+Privacy state lives in its own file, `privacy.db` next to the database (`BAMBOOZLED_PRIVACY_DB_PATH` to move it), and is never
+purged. The bot stores Discord ids and results only; a purge removes a user's result rows, stat lines and any match left
+empty, in one transaction.
+
 ## Discord Activity (optional)
 
 The Activity is the same game in an embedded Discord window. `/bamboozled-activity` makes the bot ask the backend for a session and posts a launch button.

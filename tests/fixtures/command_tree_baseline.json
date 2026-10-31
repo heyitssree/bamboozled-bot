@@ -93,44 +93,113 @@
   },
   {
     "contexts": null,
-    "default_member_permissions": null,
-    "description": "Launch Bamboozled as a Discord Activity in your voice channel",
-    "dm_permission": true,
+    "default_member_permissions": 8,
+    "description": "Administer Bamboozled",
+    "dm_permission": false,
     "integration_types": null,
-    "name": "bamboozled-activity",
+    "name": "bamboozled-admin",
     "nsfw": false,
     "options": [
       {
-        "description": "Number of rounds (5–20, default 10)",
-        "name": "rounds",
-        "required": false,
-        "type": 4
+        "description": "Open the settings panel",
+        "name": "panel",
+        "options": [],
+        "type": 1
       },
       {
-        "choices": [
+        "description": "Change a setting",
+        "name": "set",
+        "options": [
           {
-            "name": "Easy",
-            "value": "easy"
+            "autocomplete": true,
+            "description": "Which setting",
+            "name": "key",
+            "required": true,
+            "type": 3
           },
           {
-            "name": "Medium",
-            "value": "medium"
-          },
-          {
-            "name": "Hard",
-            "value": "hard"
+            "description": "The new value (on/off, a number, a choice, ids)",
+            "name": "value",
+            "required": true,
+            "type": 3
           }
         ],
-        "description": "Question difficulty: easy, medium, or hard",
-        "name": "difficulty",
-        "required": false,
-        "type": 3
+        "type": 1
       },
       {
-        "description": "Trivia category (optional)",
-        "name": "category",
-        "required": false,
-        "type": 3
+        "description": "Show a setting",
+        "name": "get",
+        "options": [
+          {
+            "autocomplete": true,
+            "description": "…",
+            "name": "key",
+            "required": true,
+            "type": 3
+          }
+        ],
+        "type": 1
+      },
+      {
+        "description": "Put a setting back to its default",
+        "name": "reset",
+        "options": [
+          {
+            "autocomplete": true,
+            "description": "…",
+            "name": "key",
+            "required": true,
+            "type": 3
+          }
+        ],
+        "type": 1
+      },
+      {
+        "description": "Uptime, rooms, Discord health, database size",
+        "name": "status",
+        "options": [],
+        "type": 1
+      },
+      {
+        "description": "List live rooms; close one or message its players",
+        "name": "rooms",
+        "options": [],
+        "type": 1
+      },
+      {
+        "description": "Download the settings as JSON",
+        "name": "export",
+        "options": [],
+        "type": 1
+      },
+      {
+        "description": "Paste exported settings to apply them",
+        "name": "import",
+        "options": [],
+        "type": 1
+      },
+      {
+        "description": "Turn testing mode on or off for this server (nothing is recorded or posted)",
+        "name": "testing",
+        "options": [
+          {
+            "choices": [
+              {
+                "name": "on",
+                "value": "on"
+              },
+              {
+                "name": "off",
+                "value": "off"
+              }
+            ],
+            "description": "…",
+            "name": "state",
+            "required": true,
+            "type": 3
+          }
+        ],
+        "type": 1
       }
     ],
     "type": 1
@@ -262,7 +331,107 @@
   {
     "contexts": null,
     "default_member_permissions": null,
-    "description": "View leaderboards for FFF, Survival, or Bamboozled quiz modes.",
+    "description": "What Bamboozled is and how to start a game",
+    "dm_permission": true,
+    "integration_types": null,
+    "name": "help",
+    "nsfw": false,
+    "options": [],
+    "type": 1
+  },
+  {
+    "contexts": null,
+    "default_member_permissions": null,
+    "description": "Top players in this server or everywhere",
+    "dm_permission": true,
+    "integration_types": null,
+    "name": "leaderboard",
+    "nsfw": false,
+    "options": [
+      {
+        "choices": [
+          {
+            "name": "Bamboozled",
+            "value": "bamboozled"
+          },
+          {
+            "name": "Fastest Fingers First",
+            "value": "fff"
+          },
+          {
+            "name": "Survival",
+            "value": "survival"
+          }
+        ],
+        "description": "Which game",
+        "name": "mode",
+        "required": false,
+        "type": 3
+      },
+      {
+        "choices": [
+          {
+            "name": "This server",
+            "value": "server"
+          },
+          {
+            "name": "Everywhere",
+            "value": "global"
+          }
+        ],
+        "description": "This server or everywhere",
+        "name": "scope",
+        "required": false,
+        "type": 3
+      }
+    ],
+    "type": 1
+  },
+  {
+    "contexts": null,
+    "default_member_permissions": null,
+    "description": "Launch Bamboozled in a voice channel",
+    "dm_permission": true,
+    "integration_types": null,
+    "name": "play",
+    "nsfw": false,
+    "options": [],
+    "type": 1
+  },
+  {
+    "contexts": null,
+    "default_member_permissions": null,
+    "description": "What Bamboozled keeps about you, and how to leave",
+    "dm_permission": true,
+    "integration_types": null,
+    "name": "privacy",
+    "nsfw": false,
+    "options": [
+      {
+        "description": "Are you in or out?",
+        "name": "status",
+        "options": [],
+        "type": 1
+      },
+      {
+        "description": "Delete my results and stop me joining games",
+        "name": "opt_out",
+        "options": [],
+        "type": 1
+      },
+      {
+        "description": "Come back",
+        "name": "opt_in",
+        "options": [],
+        "type": 1
+      }
+    ],
+    "type": 1
+  },
+  {
+    "contexts": null,
+    "default_member_permissions": null,
+    "description": "Old name of /leaderboard (it will be removed soon).",
     "dm_permission": true,
     "integration_types": null,
     "name": "quizstats",
@@ -301,6 +470,44 @@
         ],
         "description": "Server only, or global across all servers",
         "name": "scope",
+        "required": false,
+        "type": 3
+      }
+    ],
+    "type": 1
+  },
+  {
+    "contexts": null,
+    "default_member_permissions": null,
+    "description": "Show your stats, or another player's",
+    "dm_permission": true,
+    "integration_types": null,
+    "name": "stats",
+    "nsfw": false,
+    "options": [
+      {
+        "description": "Whose stats (default: you)",
+        "name": "user",
+        "required": false,
+        "type": 6
+      },
+      {
+        "choices": [
+          {
+            "name": "Bamboozled",
+            "value": "bamboozled"
+          },
+          {
+            "name": "Fastest Fingers First",
+            "value": "fff"
+          },
+          {
+            "name": "Survival",
+            "value": "survival"
+          }
+        ],
+        "description": "One game, or all of them",
+        "name": "mode",
         "required": false,
         "type": 3
       }

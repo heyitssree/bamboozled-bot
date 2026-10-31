@@ -25,6 +25,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bamboozled.bot.guards import refuse_if_opted_out
 from bamboozled.services.names import safe_name
 from bamboozled.db.repos.matches import ResultRow, ranked, record_match
 from game_engine.trivia import fetch_question_any, shuffle_answers
@@ -148,6 +149,8 @@ class FFFLobbyView(discord.ui.View):
 
     @discord.ui.button(label="🟢 Join", style=discord.ButtonStyle.success, row=0)
     async def join_btn(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
+        if await refuse_if_opted_out(interaction):                  # opted-out players cannot join (spec 10.3)
+            return
         session = self.session
         uid = interaction.user.id
 

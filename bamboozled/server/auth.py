@@ -96,6 +96,7 @@ class DiscordAuthenticator:
         self.app_id, self.bot_token, self.http = app_id, bot_token, http
         self.cache = cache or TTLCache()
         self.sleep = sleep
+        self.health: dict[str, tuple[float, str]] = {}          # last token check and last instance lookup: (when, result)
         self.is_opted_out = is_opted_out or (lambda _uid: False)
 
     async def _get(self, url: str, headers: dict) -> httpx.Response:
@@ -118,7 +119,12 @@ class DiscordAuthenticator:
         cached = self.cache.get(key)
         if cached is not None:
             return cached
-        resp = await self._get(f"{DISCORD_API}/users/@me", {"Authorization": f"Bearer {access_token}"})
+        try:
+            resp = await self._get(f"{DISCORD_API}/users/@me", {"Authorization": f"Bearer {access_token}"})
+        except DiscordUnavailable as exc:
+            self.health["token"] = (time.time(), f"unavailable ({exc})")
+            raise
+        self.health["token"] = (time.time(), "ok" if resp.status_code in (200, 401) else f"HTTP {resp.status_code}")
         if resp.status_code != 200:
             raise AuthError("bad_token", "Discord did not accept your sign-in. Reopen the Activity and try again.")
         user = resp.json()
@@ -133,15 +139,20 @@ class DiscordAuthenticator:
             cached = self.cache.get(key)
             if cached is not None:
                 return cached
-        resp = await self._get(f"{DISCORD_API}/applications/{self.app_id}/activity-instances/{instance_id}",
-                               {"Authorization": f"Bot {self.bot_token}"})
+        try:
+            resp = await self._get(f"{DISCORD_API}/applications/{self.app_id}/activity-instances/{instance_id}",
+                                   {"Authorization": f"Bot {self.bot_token}"})
+        except DiscordUnavailable as exc:
+            self.health["instance"] = (time.time(), f"unavailable ({exc})")
+            raise
+        self.health["instance"] = (time.time(), "ok" if resp.status_code in (200, 404) else f"HTTP {resp.status_code}")
         if resp.status_code != 200:
             return None
         body = resp.json()
         self.cache.set(key, body, INSTANCE_TTL_S)
         return body
 
-    async def __call__(self, access_token: str, instance_id: str) -> AuthResult:
+    async def __call__(self, access_token: str, instance_id: str, *, allow_opted_out: bool = False) -> AuthResult:
         user = await self._user(access_token)
         uid = int(user["id"])
         body = await self._instance(instance_id)
@@ -157,7 +168,7 @@ class DiscordAuthenticator:
             body = await self._instance(instance_id, fresh=True)
             if body is None:
                 raise AuthError("unknown_instance", "This Activity session no longer exists.", 4404)
-        if self.is_opted_out(uid):
+        if self.is_opted_out(uid) and not allow_opted_out:
             raise AuthError("opted_out", "You have opted out of Bamboozled. Use /privacy opt_in to play again.", 4403)
         loc = body.get("location") or {}
         try:
@@ -188,12 +199,12 @@ class DevAuthenticator:
     def __init__(self, is_opted_out: Optional[Callable[[int], bool]] = None):
         self.is_opted_out = is_opted_out or (lambda _uid: False)
 
-    async def __call__(self, access_token: str, instance_id: str) -> AuthResult:
+    async def __call__(self, access_token: str, instance_id: str, *, allow_opted_out: bool = False) -> AuthResult:
         parts = access_token.split(":", 2)
         if len(parts) != 3 or parts[0] != "dev" or not parts[1].isdigit():
             raise AuthError("bad_token", "Not a dev token (expected dev:<user_id>:<name>).")
         uid = int(parts[1])
-        if self.is_opted_out(uid):
-            raise AuthError("opted_out", "You have opted out of Bamboozled.", 4403)
+        if self.is_opted_out(uid) and not allow_opted_out:
+            raise AuthError("opted_out", "You have opted out of Bamboozled. Use /privacy opt_in to play again.", 4403)
         return AuthResult(user_id=uid, display_name=clean_name({"username": parts[2]}),
                           avatar_url=build_cdn_avatar_url(uid, None), room_key=instance_id, guild_id=1, channel_id=1)

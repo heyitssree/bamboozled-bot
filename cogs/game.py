@@ -19,6 +19,7 @@ from bamboozled.db.repos.legacy_text import (
 )
 from bamboozled.db.repos.matches import ResultRow, ranked, record_match
 from bamboozled.db.repos.stats import bamboozled_board, player_stats, reset_bamboozled
+from bamboozled.bot.guards import refuse_if_opted_out
 from bamboozled.services.names import display_name, safe_name
 from game_engine import commentary as cmnt
 from game_engine.cards import (
@@ -480,6 +481,8 @@ class LobbyView(discord.ui.View):
 
     @discord.ui.button(label="🎮 Join", style=discord.ButtonStyle.success, row=0)
     async def join_btn(self, interaction: discord.Interaction, _btn: discord.ui.Button):
+        if await refuse_if_opted_out(interaction):                  # opted-out players cannot join (spec 10.3)
+            return
         game = self.game
         if game.active:
             await interaction.response.send_message(

@@ -166,3 +166,14 @@ describe('the SDK adapters', () => {
     await expect(sdk.init()).rejects.toBeInstanceOf(SdkError)
   })
 })
+
+describe('messages from the people running the bot', () => {
+  it('an admin message becomes a toast for everyone in the room', () => {
+    useStore.getState().pushEvent({ kind: 'admin_message', payload: { text: 'Restarting in 5 minutes' } })
+    expect(useStore.getState().toasts.map((t) => [t.tone, t.text])).toEqual([['info', 'Restarting in 5 minutes']])
+  })
+  it('other events do not make toasts', () => {
+    useStore.getState().pushEvent({ kind: 'wheel_result', payload: { text: 'nope' } })
+    expect(useStore.getState().toasts).toHaveLength(0)
+  })
+})

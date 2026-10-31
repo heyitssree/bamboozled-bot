@@ -40,10 +40,10 @@ async def test_the_app_builder_picks_the_dev_authenticator_only_when_asked(monke
 
 
 def test_setting_overrides_for_dev_and_tests():
-    cfg = Config.from_env({"BAMBOOZLED_ENV": "test", "BAMBOOZLED_SETTINGS_JSON": '{"activity.reconnect_grace_seconds": 3}'})
-    assert cfg.setting_overrides() == {"activity.reconnect_grace_seconds": 3}
+    cfg = Config.from_env({"BAMBOOZLED_ENV": "test", "BAMBOOZLED_SETTINGS_JSON": '{"activity.reconnect_grace_seconds": 5}'})
+    assert cfg.setting_overrides() == {"activity.reconnect_grace_seconds": 5}
     from bamboozled.settings import Settings
-    assert Settings(cfg.setting_overrides()).get("activity.reconnect_grace_seconds") == 3
+    assert Settings(cfg.setting_overrides()).get("activity.reconnect_grace_seconds") == 5
 
 
 def test_setting_overrides_are_ignored_in_prod_and_bad_json_is_an_error():

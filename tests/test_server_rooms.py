@@ -410,3 +410,138 @@ class TestEventFiltering:
         out = self.forwarded([("turn_resolved", {"scores": {1: 5}}), ("mystery", {"scores": {1: 5}, "x": 1}),
                               ("endgame", {"scores": {1: 5}})], mist=False)
         assert out == [("mystery", {"x": 1}), ("endgame", {"scores": {1: 5}})]
+
+
+class TestPrivacyAndTestingEnforcement:
+    def test_an_opted_out_user_cannot_be_seated_at_all(self):
+        mgr, clock, _ = make()
+        mgr.is_opted_out = lambda uid: uid == 7
+        with pytest.raises(Refused) as err:
+            mgr.connect(auth(7), clock.now)
+        assert err.value.code == "opted_out" and err.value.close_code == 4403
+        assert mgr.rooms == {}                                          # and they never made a room appear
+
+    async def test_someone_who_opts_out_mid_game_is_left_out_of_what_is_saved_and_posted(self):
+        mgr, clock, rec, c = lobby(3)
+        mgr.handle_text(c[1], msg("START"), clock.now)
+        await play_out(mgr, clock, c)                                   # the game is over; results wait to be flushed
+        mgr.is_opted_out = lambda uid: uid == 2                         # user 2 opts out before they are written
+        await mgr.pump(clock.now)
+        saved = rec.calls[-1][2]
+        assert 2 not in [uid for uid, _, _ in saved] and len(saved) == 2
+        assert [rank for _, rank, _ in saved] == [1, 2]
+        assert 2 not in [uid for uid, _ in mgr.overs[-1][1]]
+
+    async def test_a_testing_server_records_nothing_and_posts_no_card(self):
+        guild = 123456789012345678
+        mgr, clock, rec = make()
+        c = {u: mgr.connect(auth(u, guild=guild), clock.now) for u in (1, 2)}
+        mgr.settings.set("system.testing_guilds", [guild])
+        mgr.handle_text(c[1], msg("START"), clock.now)
+        await play_out(mgr, clock, c)
+        await mgr.pump(clock.now)
+        assert rec.calls == [] and mgr.overs == []
+        mgr.settings.set("system.testing_guilds", [])                    # the same game elsewhere is recorded
+        mgr2, clock2, rec2 = make()
+        c2 = {u: mgr2.connect(auth(u, guild=guild), clock2.now) for u in (1, 2)}
+        mgr2.handle_text(c2[1], msg("START"), clock2.now)
+        await play_out(mgr2, clock2, c2)
+        await mgr2.pump(clock2.now)
+        assert len(rec2.calls) == 1
+
+    def test_evicting_a_user_closes_their_sockets_and_hands_the_lobby_on(self):
+        mgr, clock, _, c = lobby(3)
+        mgr.evict_user(1)
+        assert c[1].closed and c[1].close_code == 4403 and "opted_out" in errors(c[1])
+        assert mgr.rooms["r1"].host == 2 and 1 not in mgr.rooms["r1"].members
+        assert [m["user_id"] for m in state(c[2])["members"]] == [2, 3]
+
+    async def test_evicting_a_player_mid_game_removes_them_through_the_engine(self):
+        mgr, clock, _, c = lobby(3)
+        mgr.handle_text(c[1], msg("START"), clock.now)
+        await mgr.pump(clock.now)
+        assert mgr.in_running_game(3) and not mgr.in_running_game(99)
+        mgr.evict_user(3)
+        assert [p["user_id"] for p in state(c[1])["game"]["players"]] == [1, 2]
+        assert not mgr.in_running_game(3)
+
+    def test_admin_tools_list_message_and_close_rooms(self):
+        mgr, clock, _, c = lobby(2)
+        listing = mgr.rooms_summary(clock.now + 61_000)
+        assert listing == [{"key": "r1", "mode": "bamboozled", "phase": "lobby", "players": 2, "watching": 0, "age_s": 61,
+                            "guild_id": 10, "channel_id": 20}]
+        assert mgr.admin_message("r1", "Server restarts in 5 minutes") is True
+        assert last(c[2], "EVENT")["d"] == {"kind": "admin_message", "payload": {"text": "Server restarts in 5 minutes"}}
+        assert mgr.admin_message("nope", "x") is False
+        mgr.close_room("r1", "room_closed")
+        assert mgr.rooms == {} and last(c[1], "BYE")["d"]["reason"] == "room_closed"
+
+
+class TestRevealPause:
+    """After an answer the result stays on screen for game.reveal_pause_seconds before the next question is asked."""
+
+    async def start(self, mode="fff", n=2, **settings):
+        mgr, clock, rec, c = lobby(n, **settings)
+        mgr.handle_text(c[1], msg("SET_MODE", {"mode": mode}), clock.now)
+        mgr.handle_text(c[1], msg("START"), clock.now)
+        await mgr.pump(clock.now)
+        return mgr, clock, c
+
+    async def test_fastest_fingers_shows_the_round_result_before_the_next_question(self):
+        mgr, clock, c = await self.start("fff")
+        for u in (1, 2):
+            clock.advance(200)
+            mgr.handle_text(c[u], msg("ANSWER", {"index": 0}), clock.now)
+        shown = state(c[1])["game"]
+        assert shown["reveal"] is not None and shown["question"] is None and shown["waiting_question"] is True
+        clock.advance(2_900)                                            # almost 3 seconds: still the result
+        await mgr.pump(clock.now)
+        assert state(c[1])["game"]["question"] is None and state(c[1])["game"]["reveal"] is not None
+        clock.advance(200)
+        await mgr.pump(clock.now)
+        nxt = state(c[1])["game"]
+        assert nxt["question"] is not None and nxt["reveal"] is None and nxt["q_index"] == 1
+
+    async def test_the_pause_does_not_eat_into_the_next_questions_time(self):
+        mgr, clock, c = await self.start("fff")
+        for u in (1, 2):
+            mgr.handle_text(c[u], msg("ANSWER", {"index": 0}), clock.now)
+        clock.advance(3_000)
+        await mgr.pump(clock.now)
+        g = state(c[1])
+        assert g["game"]["deadline_ms"] - clock.now == 10_000          # a full 10 seconds, counted from when it was asked
+
+    async def test_the_pause_is_a_setting_and_zero_means_no_pause(self):
+        mgr, clock, c = await self.start("fff", **{"game.reveal_pause_seconds": 0})
+        for u in (1, 2):
+            mgr.handle_text(c[u], msg("ANSWER", {"index": 0}), clock.now)
+        await mgr.pump(clock.now)
+        assert state(c[1])["game"]["question"] is not None
+
+    async def test_survival_pauses_after_a_correct_answer_per_player(self):
+        mgr, clock, c = await self.start("survival")
+        mgr.handle_text(c[1], msg("ANSWER", {"index": 0}), clock.now)
+        await mgr.pump(clock.now)
+        assert state(c[1])["game"]["question"] is None and state(c[1])["game"]["streak"] == 1
+        assert state(c[2])["game"]["question"] is not None              # the other player's run is not held up
+        clock.advance(3_100)
+        await mgr.pump(clock.now)
+        assert state(c[1])["game"]["question"] is not None
+
+    async def test_bamboozled_holds_the_result_when_a_turn_ends_without_a_card_to_draw(self):
+        mgr, clock, c = await self.start("bamboozled", 2)
+        mgr.handle_text(c[1], msg("FORFEIT"), clock.now)               # a skipped turn: nothing to draw, the next turn begins
+        await mgr.pump(clock.now)
+        g = state(c[2])["game"]
+        assert g["question"] is None and g["reveal"]["forfeit"] is True and g["waiting_question"] is True
+        clock.advance(3_100)
+        await mgr.pump(clock.now)
+        assert state(c[2])["game"]["question"] is not None and state(c[2])["game"]["turn_player"] == 2
+
+    async def test_a_new_game_starts_without_a_hold_left_over_from_the_last(self):
+        mgr, clock, rec, c = lobby(2)
+        mgr.rooms["r1"].hold = {None: clock.now + 60_000}                # a leftover from the previous game
+        mgr.handle_text(c[1], msg("START"), clock.now)
+        assert mgr.rooms["r1"].hold == {}
+        await mgr.pump(clock.now)
+        assert state(c[1])["game"]["question"] is not None
