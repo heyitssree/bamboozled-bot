@@ -1,0 +1,101 @@
+/* Design tokens: the only place colours, type, spacing, radii, elevation and motion are defined. Dark is the default;
+   light follows the system; Settings can force either (data-theme on <html>). Every text/background pair is meant to
+   pass WCAG AA (4.5:1 for text, 3:1 for large text and UI edges) and is checked by the axe run in the E2E suite. */
+:root {
+  color-scheme: dark;
+  --bg: #0e1020;
+  --surface: #171b33;
+  --surface-2: #20254a;
+  --surface-3: #2b3160;
+  --border: #4a5088;
+  --text: #f1f2ff;
+  --text-muted: #b4b9e0;
+  --accent: #4f3fd6;            /* white text on this is 7:1 */
+  --accent-hover: #6150ea;
+  --accent-text: #ffffff;
+  --accent-soft: #2f2a73;
+  --focus: #ffd24a;
+  --success: #3ddc97;
+  --success-bg: #0f3d2b;
+  --danger: #ff8a9b;
+  --danger-bg: #4a1623;
+  --warning: #ffd24a;
+  --gold: #ffd24a;
+  --silver: #d6dbf5;
+  --bronze: #f0a674;
+  --overlay: rgba(6, 7, 18, 0.78);
+
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-xs: 0.8125rem;
+  --fs-sm: 0.9375rem;
+  --fs-md: 1.0625rem;
+  --fs-lg: 1.3125rem;
+  --fs-xl: 1.75rem;
+  --fs-xxl: clamp(2rem, 7vw, 3rem);
+
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+  --radius-sm: 8px; --radius: 14px; --radius-lg: 22px; --radius-full: 999px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --tap: 44px;                  /* minimum touch target */
+
+  --dur-fast: 120ms;
+  --dur: 220ms;
+  --dur-slow: 600ms;
+  --dur-spin: 3200ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+    --bg: #f3f4fc;
+    --surface: #ffffff;
+    --surface-2: #e9ebfb;
+    --surface-3: #d9dcf6;
+    --border: #6b72b0;
+    --text: #14173a;
+    --text-muted: #474d82;
+    --accent: #4f3fd6;
+    --accent-hover: #3f30b8;
+    --accent-soft: #e0dcff;
+    --focus: #8a5a00;
+    --success: #0b6b43;
+    --success-bg: #d5f5e6;
+    --danger: #a3132f;
+    --danger-bg: #fde0e6;
+    --warning: #8a5a00;
+    --gold: #8a5a00;
+    --silver: #4a5070;
+    --bronze: #8a4a1a;
+    --overlay: rgba(243, 244, 252, 0.88);
+    --shadow-1: 0 1px 2px rgba(20, 23, 58, 0.15);
+    --shadow-2: 0 8px 24px rgba(20, 23, 58, 0.18);
+  }
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f3f4fc;
+  --surface: #ffffff;
+  --surface-2: #e9ebfb;
+  --surface-3: #d9dcf6;
+  --border: #6b72b0;
+  --text: #14173a;
+  --text-muted: #474d82;
+  --accent: #4f3fd6;
+  --accent-hover: #3f30b8;
+  --accent-soft: #e0dcff;
+  --focus: #8a5a00;
+  --success: #0b6b43;
+  --success-bg: #d5f5e6;
+  --danger: #a3132f;
+  --danger-bg: #fde0e6;
+  --warning: #8a5a00;
+  --gold: #8a5a00;
+  --silver: #4a5070;
+  --bronze: #8a4a1a;
+  --overlay: rgba(243, 244, 252, 0.88);
+  --shadow-1: 0 1px 2px rgba(20, 23, 58, 0.15);
+  --shadow-2: 0 8px 24px rgba(20, 23, 58, 0.18);
+}

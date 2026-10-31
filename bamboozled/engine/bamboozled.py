@@ -201,7 +201,8 @@ class BamboozledEngine:
             "law": ({"id": s.law["id"], "name": s.law["name"], "permanent": s.law["permanent"]} if s.law else None),
             "pending": ({"kind": p.kind, "actor": p.actor, "deadline_ms": p.deadline_ms,
                          "options": [u for u in s.players if u != p.actor] if p.kind == "pick_target" else None,
-                         "can_skip": p.data.get("purpose") == "switcheroo"} if p else None),
+                         "can_skip": p.data.get("purpose") == "switcheroo",
+                         "which": p.data.get("which"), "purpose": p.data.get("purpose")} if p else None),
             "waiting_question": s.waiting_question,
             "deadline_ms": p.deadline_ms if p else None,
             "question": s.question.public() if s.question else None,       # the correct index is NOT here

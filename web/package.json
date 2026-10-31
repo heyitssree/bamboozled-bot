@@ -1,0 +1,49 @@
+{
+  "name": "bamboozled-web",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && node scripts/inline-css.mjs",
+    "build:mock": "VITE_MOCK_DISCORD=1 vite build --outDir dist-mock && node scripts/inline-css.mjs dist-mock",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests",
+    "test": "vitest run",
+    "test:e2e": "playwright test --project=e2e --workers=1",
+    "test:a11y": "playwright test --project=a11y",
+    "test:visual": "playwright test --project=visual",
+    "size": "node scripts/check-size.mjs",
+    "lighthouse": "node scripts/lighthouse.mjs"
+  },
+  "dependencies": {
+    "@discord/embedded-app-sdk": "2.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zustand": "4.5.5"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.0",
+    "@eslint/js": "9.17.0",
+    "@playwright/test": "1.49.1",
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "16.1.0",
+    "@testing-library/user-event": "14.5.2",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@vitejs/plugin-react": "4.3.4",
+    "chrome-launcher": "1.1.2",
+    "eslint": "9.17.0",
+    "eslint-plugin-react-hooks": "5.1.0",
+    "globals": "15.14.0",
+    "jsdom": "25.0.1",
+    "lighthouse": "12.3.0",
+    "typescript": "5.7.2",
+    "typescript-eslint": "8.18.2",
+    "vite": "5.4.11",
+    "vitest": "2.1.8"
+  },
+  "overrides": {
+    "playwright-core": "1.49.1"
+  }
+}

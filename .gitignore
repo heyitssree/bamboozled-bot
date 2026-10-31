@@ -34,3 +34,5 @@ data/dev/
 graphify-out/
 .coverage
 htmlcov/
+dist-mock/
+web/node_modules/

@@ -36,7 +36,7 @@ async def _dev_banner() -> None:
 
 def build(cfg: Config, settings: Optional[Settings] = None, bot=None):
     """Assemble the pieces. Returns (app, manager, deps, http_client)."""
-    settings = settings or Settings()
+    settings = settings or Settings(cfg.setting_overrides())
     http = httpx.AsyncClient(timeout=10.0)
     authenticator = DevAuthenticator() if cfg.dev_auth else DiscordAuthenticator(cfg.app_id, cfg.bot_token, http)
 

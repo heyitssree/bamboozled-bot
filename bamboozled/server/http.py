@@ -14,6 +14,7 @@ from typing import Awaitable, Callable, Optional
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -235,14 +236,16 @@ def create_app(deps: Deps) -> FastAPI:
             wake.set()
             await asyncio.gather(writer, return_exceptions=True)
 
+    @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+    async def no_such_api(rest: str):
+        return JSONResponse({"error": "not_found"}, status_code=404)   # any method: clients can tell "absent" from "refused"
+
     # ───────────────────────────── the web app ─────────────────────────────
 
     dist = deps.cfg.web_dist.resolve()
 
     @app.get("/{path:path}")
     async def static(path: str):
-        if path.startswith("api/"):
-            return JSONResponse({"error": "not_found"}, status_code=404)
         index = dist / "index.html"
         if not index.is_file():
             return JSONResponse({"error": "web_app_not_built"}, status_code=404)
@@ -254,6 +257,7 @@ def create_app(deps: Deps) -> FastAPI:
                    else {"Cache-Control": "public, max-age=3600"})
         return FileResponse(target, headers=headers)
 
+    app.add_middleware(GZipMiddleware, minimum_size=1000)           # the web app is mostly JavaScript: send it compressed
     app.add_middleware(Guard, deps=deps)
     return app
 

@@ -75,7 +75,7 @@ board            Survival only: [{user_id, streak, over, reason}] for everyone
 results          after a game: [{user_id, rank, score, correct, details}]
 ```
 `game` for **Bamboozled**: `stage`, `round`, `total_rounds`, `turn_player`, `players[]` (`score` is `null` while the Mist is
-up), `law`, `pending {kind, actor, deadline_ms, options, can_skip}`, `question` (never the correct index), `reveal`.
+up), `law`, `pending {kind, actor, deadline_ms, options, can_skip, which, purpose}` (`which`: chance or wango for a draw; `purpose`: switcheroo or gift for a target pick), `question` (never the correct index), `reveal`.
 For **FFF**: `players[] {user_id, score, locked}`, `q_index`, `total_q`, `question`, `your_answer` (only yours), `reveal`.
 For **Survival** (your own run): `streak`, `question`, `reveal`, `reason`.
 The correct answer first appears in `reveal`, after the answer is in.

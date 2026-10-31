@@ -266,3 +266,20 @@ def test_the_manager_dropping_a_connection_closes_the_socket(web):
             with pytest.raises(WebSocketDisconnect) as err:
                 a.receive_json()
             assert err.value.code == 4409
+
+
+def test_unknown_api_routes_are_404_for_every_method(web):
+    client, _ = make_client(web)
+    for method in ("get", "post", "put", "patch", "delete"):
+        r = getattr(client, method)("/api/privacy/opt_out")
+        assert r.status_code == 404 and r.json() == {"error": "not_found"}, method
+    assert client.get("/api/health").status_code == 200                      # real routes still win
+
+
+def test_large_static_files_are_compressed(web):
+    (web / "assets" / "big.abc999.js").write_text("console.log('x');" * 500)
+    client, _ = make_client(web)
+    r = client.get("/assets/big.abc999.js", headers={"accept-encoding": "gzip"})
+    assert r.headers["content-encoding"] == "gzip" and "immutable" in r.headers["cache-control"]
+    assert client.get("/api/health", headers={"accept-encoding": "gzip"}).json() == {"status": "ok"}   # small replies untouched
+    assert "x-frame-options" not in r.headers and r.headers["x-content-type-options"] == "nosniff"

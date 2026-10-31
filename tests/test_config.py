@@ -37,3 +37,21 @@ async def test_the_app_builder_picks_the_dev_authenticator_only_when_asked(monke
     _, _, deps, http = build(Config.from_env({"BAMBOOZLED_ENV": "prod", "DISCORD_APPLICATION_ID": "1", "DISCORD_TOKEN": "t"}))
     assert isinstance(deps.authenticator, DiscordAuthenticator)
     await http.aclose()
+
+
+def test_setting_overrides_for_dev_and_tests():
+    cfg = Config.from_env({"BAMBOOZLED_ENV": "test", "BAMBOOZLED_SETTINGS_JSON": '{"activity.reconnect_grace_seconds": 3}'})
+    assert cfg.setting_overrides() == {"activity.reconnect_grace_seconds": 3}
+    from bamboozled.settings import Settings
+    assert Settings(cfg.setting_overrides()).get("activity.reconnect_grace_seconds") == 3
+
+
+def test_setting_overrides_are_ignored_in_prod_and_bad_json_is_an_error():
+    prod = Config.from_env({"BAMBOOZLED_ENV": "prod", "BAMBOOZLED_SETTINGS_JSON": '{"system.killswitch": true}'})
+    assert prod.setting_overrides() == {}
+    for bad in ("not json", "[1, 2]"):
+        with pytest.raises(ConfigError):
+            Config.from_env({"BAMBOOZLED_ENV": "dev", "BAMBOOZLED_SETTINGS_JSON": bad}).setting_overrides()
+    from bamboozled.settings import Settings
+    with pytest.raises(KeyError):
+        Settings(Config.from_env({"BAMBOOZLED_ENV": "dev", "BAMBOOZLED_SETTINGS_JSON": '{"no.such.key": 1}'}).setting_overrides())

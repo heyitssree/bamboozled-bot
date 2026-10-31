@@ -235,3 +235,72 @@ Phases 0 to 2). Protocol: `docs/protocol.md`.
 
 ### Needed from you at this gate
 Approve the protocol (`docs/protocol.md`) and the two deviations in 1 and 2 above.
+
+## Phase 4 - The GUI
+
+Status: **built, awaiting owner sign-off.** Branch `v2/phase-4-gui` (from `main`, which holds the approved Phases 0 to 3).
+App: `web/` (README there). The old `activity/` app is untouched and is removed at the cutover.
+
+### Built
+React + TypeScript + Vite + Zustand, all three modes in one app. No game rule lives in the browser: it shows what the
+server decided and sends intents.
+- **Structure as specified:** `sdk/discord.ts` (Embedded App SDK) and `sdk/mock.ts` (drop-in stand-in); a lint rule
+  makes `discord.ts` the only file allowed to import the SDK. `net/` owns the socket (AUTH first frame, 30 s ping,
+  exponential backoff with jitter, sequence-gap resync, server-clock offset). One store fed only by STATE and EVENT.
+- **Design system** (`styles/tokens.css` is the only place colours, type, spacing, radii, elevation and motion are
+  defined; dark default, light from the system, manual override): Button, IconButton, Avatar (with fallback), PlayerChip,
+  TimerRing, AnswerButton (idle, selected, locked, correct, wrong), flip Card, Wheel, Scoreboard, Podium, Modal, Toast,
+  Banner, Tabs, Toggle, Skeleton.
+- **Screens and states:** sign-in and every failure (loading, not in Discord, auth failed with retry, not in this
+  instance, opted out, server full, maintenance, opened elsewhere); lobby (host or player, below minimum, late joiner
+  as spectator, reconnecting); Bamboozled (my turn or waiting, timer ring, answers with keys 1 to 4, reveal, card flip,
+  target picker, law picker, golden monkey with countdown, Mist overlay that hides scores, round banner, spectator);
+  Fastest Fingers (avatars light up when locked without showing the answer, speed ranking with points, too late, ties);
+  Survival (streak meter, run summary against your best, live board for spectating); results (podium, table, rematch,
+  tie, interrupted); stats and leaderboards (this server or everywhere, empty and loading states); settings (sound,
+  reduce motion, theme, privacy with a confirmation); overlays (reconnecting, game interrupted, room closed, toasts).
+- **Never colour alone:** correct and wrong carry an icon and a word; the turn marker says "Turn"; locked says "Locked in".
+- **Motion and sound:** wheel spin, card flip and streak are driven by server events and each has an instant
+  reduced-motion version (system setting or the toggle). Sound cues are synthesised in the browser (nothing to download
+  or license), start after the first tap, and have a session-remembered mute.
+- **Screen gallery** (mock builds only, `?screen=<id>`): 56 fixtures cover every screen in every state without a
+  server; it feeds the accessibility and visual tests. Production bundles contain no fixtures or mock code (checked).
+
+### Gate evidence
+| Check | Result |
+|---|---|
+| Whole-repo Python suite | **933 passed**, ruff clean |
+| Web unit tests (Vitest) | **137 passed**: network client with a fake socket and fake timers, store replay, settings with broken storage, SDK adapters, every component, every screen from the fixtures, controls send the right messages |
+| End to end (Playwright, real Python server + real engine, mock Discord, 2 to 4 browser contexts) | **19 passed in about 50 s**: a full game of each mode with 2, 3 and 4 clients (driven only through the UI), a socket dropped mid-question keeps the seat and the question, late joiner becomes a spectator, host leaving hands over, keys 1 to 4, settings applied and remembered, stats dialog, axe on live pages, and a **real server restart** (clients show "Game interrupted" at once and land in a working lobby) |
+| Accessibility (axe, WCAG 2 A/AA) | **112 passed**: every screen in every state, dark and light themes, no serious or critical findings. A deliberately broken contrast token made it fail, so it is a real check |
+| Visual | 48 baseline screenshots (16 key states at 360, 768 and 1280 px) stable across regeneration; **no screen scrolls sideways at 320 px**; all buttons, tabs, selects and switches are at least 44 px |
+| Bundle | initial JavaScript **102 KB gzipped** (budget 250); each mode is its own on-demand chunk (1.4 to 2.7 KB) |
+| Lighthouse (mobile, simulated slow 4G, 4x CPU) | performance **1.00**, accessibility **1.00**, first paint **1.1 s**, largest paint **1.2 s** (budget 3 s), blocking time 0, JavaScript transferred 60 KB |
+| Lint and types | strict TypeScript and ESLint clean; the SDK-import rule was checked with a probe file |
+| CI | `.github/workflows/ci.yml` runs the Python suite and the whole web suite on every push |
+
+### Found and fixed while building
+- Skip link and the wheel were not up to the 44 px / no-sideways-scroll rules; fixed.
+- The server answered 405 (not 404) for unknown `/api` routes of other methods; fixed with a real 404 for every method.
+- The server sent assets uncompressed; added gzip (Lighthouse JavaScript transfer 180 KB to 60 KB).
+- Stylesheet inlined at build time and a static "Signing in" screen in the HTML: first paint 2.0 s to 1.1 s.
+- Test hygiene: chained `expect(a) && expect(b)` silently skips the second assertion; found and fixed before commit.
+- The Bamboozled view now says which deck a draw is for and what a target pick is for (`which`, `purpose`).
+
+### Deviations and honest limits
+1. **Not done: the owner's play-test on desktop and phone through a tunnel** (spec gate). It needs the separate test
+   Discord application (owner input #1). Everything else at the gate was run, but real Discord rendering, the real SDK
+   adapter (`sdk/discord.ts`) and Discord's proxy rules for avatars and fonts are unverified.
+2. **Screenshot baselines are macOS-rendered.** CI skips pixel comparison on Linux (fonts differ) but still runs the
+   overflow and touch-target checks there.
+3. **Lighthouse "best practices"** flags third-party cookies and a DevTools issue that come from Discord's avatar CDN
+   (needed to show pictures). The budget fails on any other best-practices finding.
+4. **Brand assets** (owner input #3) are not supplied: a neutral palette that passes contrast is used, and the system
+   font stack (nothing third-party loaded). Sounds are original (synthesised), so licensing is clear.
+5. **Privacy buttons** call `/api/privacy/*`, which arrive in Phase 5; until then the app says so honestly instead of
+   pretending the data was deleted.
+6. Wheel labels on the lower slices read upside down, as on a real wheel; the result is also always written out.
+
+### Needed from you at this gate
+Play each mode on desktop and a phone (needs the test application), and approve the look: the 48 screenshots are in
+`web/tests/visual/screens.spec.ts-snapshots/` (start with `lobby-host`, `bz-my-question`, `bz-mist`, `fff-reveal`).

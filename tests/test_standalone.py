@@ -5,7 +5,7 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FORBIDDEN = [r"navi", r"\bboli\b", r"BOT_INTERNAL", r"external_boli", r"user_stats", r"\.\./(?!\.)", r"NAVI_"]
 SKIP = {".git", ".venv", "node_modules", "dist", "cdk.out", "__pycache__", ".pytest_cache", ".ruff_cache",
-        "logs", "graphify-out", "CHANGELOG-v2.md", "docs"}
+        "logs", "graphify-out", "test-results", "playwright-report", "dist-mock", "CHANGELOG-v2.md", "docs"}
 SUFFIXES = {".py", ".ts", ".tsx", ".json", ".md", ".sh", ".yml", ".yaml", ".sql", ".toml", ".txt"}
 # Relative imports such as '../store/x' are normal in TypeScript, so the parent-directory pattern skips them.
 PARENT_DIR_OK = {".ts", ".tsx"}
