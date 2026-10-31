@@ -157,6 +157,20 @@ same players.
 9. FFF stores `correct_answers = score // 75` ("approximate") in the old database; this is wrong for first-correct
    answers. It disappears with the old tables in Phase 1.
 
-## 5. Intended differences (Phase 2)
+## 5. Intended differences (Phase 2) - owner-approved 31 Oct 2026
 
-None agreed yet. Items from section 4 that the owner wants changed are listed here with the owner's sign-off.
+The owner accepted all six recommendations. The Phase 2 engine implements the new behaviour by default. Each old
+behaviour stays available behind a name in `GameConfig.legacy_quirks` so the parity tests can prove that, with the
+quirks on, the engine matches the legacy code exactly; everything else is identical in both modes.
+
+| # | Quirk name | Old behaviour (legacy_quirks) | New behaviour (default) |
+|---|---|---|---|
+| 1 | `afk_skip` | Removing an AFK player also skips the next player's turn and bumps the round | The next player keeps their turn; the round only advances when the rotation actually wraps |
+| 2 | (FFF, not a quirk flag) | Quit / kicked players vanish from the results | They stay in the results with the points they had, ranked below players who finished (`details.left`) |
+| 3 | - | Double Down and tiebreak questions ignore laws and the Sombrero | **Unchanged** (kept as a rule) |
+| 4 | `mist_short` | Mist = rest of the activating turn plus one | Mist covers the next `mist_turn_duration` full turns (2, or 4 under Mist Magnet) |
+| 5a | `wango_again_reset` | A Wango card drawn by Wango Again restarts the Double Wango chain count | The chain count carries through |
+| 5b | `golden_pass_wrong_only` | The Golden Pass only blocks the Wango card drawn after a wrong answer | It blocks the next Wango card drawn for that player from any source except extra cards inside a Double Wango chain |
+| 6 | (Survival, not a quirk flag) | A fetch error can count as a personal best | An error or give-up never counts (`is_new_best`) |
+
+The legacy text games are left untouched and remain the oracle until the cutover.

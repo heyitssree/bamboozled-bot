@@ -116,3 +116,61 @@ Status: **built, awaiting owner sign-off.** Branch `v2/phase-1-standalone` (stac
   the separate test Discord application and server (owner input #1). The offline tests above cover the same code paths
   and the real `AllowedMentions` payloads, but they are not a live run.
 - The six **CONFIRM** items from Phase 0 are still open; they block Phase 2, not this phase.
+
+## Phase 2 - Engine extraction
+
+Status: **built, awaiting owner sign-off.** Branch `v2/phase-2-engine` (stacked on `v2/phase-1-standalone`).
+The legacy text games are untouched and remain the oracle until the cutover.
+
+### Owner decisions applied (31 Oct 2026)
+All six recommendations accepted. Table in `docs/rules-as-implemented.md` section 5. Four are switchable back to the
+old behaviour with `GameConfig.legacy_quirks` (`afk_skip`, `mist_short`, `wango_again_reset`,
+`golden_pass_wrong_only`) so the parity tests can prove equivalence; the other two (FFF leavers stay in the results,
+Survival errors never count as a personal best) and the kept rule (Double Down ignores laws) are plain behaviour.
+
+### Added: `bamboozled/engine/`
+| File | Contents |
+|---|---|
+| `api.py` | `Engine` protocol, `GameConfig`, `Intent`, `Event`, `Result`, `ResultRow`, `Question`, `IllegalIntent` (codes: not_in_game, not_your_turn, bad_phase, bad_index, bad_target, bad_rule, bad_choice, too_late, already_answered, over) |
+| `bamboozled.py` | The turn engine. A turn is an agenda of steps walked until the game needs a question or a player decision, so cards, the wheel and the monkey nest without recursion and survive a restart as plain data |
+| `fff.py`, `survival.py` | The other two modes |
+| `rules.py`, `cards.py`, `wheel.py`, `scoring.py` | Constants and the eleven laws, the decks, the wheel, ranking and the personal-best rule |
+| `bots.py` | Legal-move listing and a play-to-the-end driver (property tests, CLI, later the load test) |
+
+Design points: `apply` returns a new state and never touches the one it was given; all randomness comes from a
+`random.Random` state carried inside the game state (same seed, same game); time is `now_ms`; questions are supplied
+from outside (`needs_question` / `supply_question`), so the engine does no I/O; `view_for` is the only way state
+leaves and never contains the correct index before the reveal, other players' pending FFF answers, or Mist-hidden
+scores. Every decision the old UI asked for is an intent with a legal-move check.
+
+### Proof of equivalence
+| Check | Result |
+|---|---|
+| Parity, Bamboozled | **150 seeded full games** (2 to 4 players, 2 to 3 rounds; 422+ turns compared snapshot-by-snapshot, plus the final ranking) and **132 more** with each of the 11 laws in force from turn one: engine with the four quirks on equals the legacy code exactly. All 6 Chance cards, all 6 Wango cards, 7 wheel outcomes (the 8th, Monkey's Choice, resolves into one of them), tiebreaks, AFK removals, silences, laws and Mist are exercised |
+| Parity, FFF | 80 seeded games (random arrival order, ties, skips, quits) |
+| Parity, Survival | 60 seeded runs |
+| Parity can fail | Mutation checks: changing tax rate, gift amount, slow-burn and speed-tax thresholds, hot-streak, karma, underdog, sombrero-curse, timeout-terror, lucky-last, FFF 75 points, AFK reset and the Survival streak each made the parity tests fail; originals restored |
+| Properties (hypothesis) | Random legal play always terminates; invariants hold at every step; turn order never repeats within a round; `apply` never changes its input; junk intents only ever raise `IllegalIntent` and leave the state untouched; no view leaks the correct index, another player's FFF answer or Mist-hidden scores (three injected leaks were caught); same seed gives the same game; a single ordinary score change is capped at 300 |
+| Coverage | `bamboozled/engine/` **98%** (spec: 90%) |
+| Purity | `tests/test_engine_purity.py`: no I/O, clock, asyncio, discord, global random or legacy-code import |
+| Whole suite | **816 passed, 2 deselected** |
+
+### Bugs found by writing the engine tests (fixed)
+- A leaving player's follow-up decisions (a card that leads to a spin or a target pick) left the room waiting on them
+  until the deadline; the main loop now auto-resolves anything pending on a leaver.
+- FFF: a player who locked an answer and then left lost the points for that answer; the locked answer now counts and
+  they are removed when the round ends.
+
+### Terminal player
+`python tools/play_cli.py --mode bamboozled|fff|survival [--bots N] [--rounds N] [--seed N] [--auto] [--quirks a,b]`
+Play against scripted bots from `data/custom_questions.json`; `--auto` watches bots play every seat.
+
+### Deviations to note
+1. State classes live in the same file as each mode's engine (`bamboozled.py`, `fff.py`, `survival.py`) instead of a
+   separate `state.py`; `rules.py` holds constants and laws, `scoring.py` ranking.
+2. Final rankings break ties by user id (the order the database uses); turn and spin order inside a game still follow
+   seat order, as the old game did.
+3. Intent idempotency on a client message id is a server concern (Phase 3), not the engine's.
+
+### Needed from you at this gate
+Play each mode through `tools/play_cli.py` and approve the rules document and section 5 (the spec's Phase 2 gate).

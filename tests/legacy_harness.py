@@ -39,10 +39,17 @@ class Script:
         self.elapsed = 7.0          # seconds the active player "took" to answer
         self.fetch_kwargs: list[dict] = []
         self.selects: list[list[int]] = []
+        self.policy = None                  # optional callable(key, ctx) used when a queue is empty (parity tests)
+        self._clock = {"n": 0}
 
-    def next(self, key: str, *default: Any) -> Any:
+    def reset_clock(self) -> None:
+        self._clock["n"] = 0
+
+    def next(self, key: str, *default: Any, ctx: Any = None) -> Any:
         if self.q.get(key):
             return self.q[key].pop(0)
+        if self.policy is not None:
+            return self.policy(key, ctx)
         if default:
             return default[0]
         raise ScriptExhausted(f"script has nothing left for '{key}'")
@@ -111,7 +118,10 @@ def _views(script: Script) -> dict[str, Any]:
             self.chosen_idx: int | None = None
             self.timed_out = False
             self._stopped = False
-            self._mode = script.next("answer")      # int index | "timeout" | "forfeit"
+            mode = script.next("answer")            # int index | "timeout" | "forfeit" | (one of those, elapsed_seconds)
+            if isinstance(mode, tuple):
+                mode, script.elapsed = mode
+            self._mode = mode
             self.active_player_id = active_player_id
 
         async def wait(self):
@@ -133,7 +143,7 @@ def _views(script: Script) -> dict[str, Any]:
     class FakePlayerSelectView:
         def __init__(self, game, active_player_id, placeholder, timeout, allow_skip=False, skip_label=""):
             script.selects.append([p for p in game.players if p != active_player_id])
-            v = script.next("target")                # user id | "skip" | None (timeout)
+            v = script.next("target", ctx=[p for p in game.players if p != active_player_id])   # id | "skip" | None
             self.target_id = v if isinstance(v, int) else None
             self.skipped = v == "skip"
             self.timed_out = v is None
@@ -194,7 +204,7 @@ def legacy_env(script: Script, game: GameState | None = None):
     channel = FakeChannel()
     cog = G.BamboozledCog(FakeBot(channel))
 
-    clock = {"n": 0}
+    clock = script._clock
 
     def monotonic():
         clock["n"] += 1

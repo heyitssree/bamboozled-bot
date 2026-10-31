@@ -7,3 +7,4 @@ freezegun>=1.5,<2
 respx>=0.21,<1
 # the Activity backend (smoke-tested until Phase 3 replaces it)
 -r activity/backend/requirements.txt
+pytest-cov>=5,<8
